@@ -18,6 +18,7 @@ from .mcmc import barker
 from .mcmc import dynamic_hmc as _dynamic_hmc
 from .mcmc import elliptical_slice as _elliptical_slice
 from .mcmc import ghmc as _ghmc
+from .mcmc import smhr as _smhr
 from .mcmc import hmc as _hmc
 from .mcmc import mala as _mala
 from .mcmc import marginal_latent_gaussian
@@ -113,6 +114,7 @@ additive_step_random_walk = GenerateSamplingAPI(
 
 additive_step_random_walk.register_factory("normal_random_walk", normal_random_walk)
 
+smhr = generate_top_level_api_from(_smhr)
 mclmc = generate_top_level_api_from(_mclmc)
 adjusted_mclmc_dynamic = generate_top_level_api_from(_adjusted_mclmc_dynamic)
 adjusted_mclmc = generate_top_level_api_from(_adjusted_mclmc)
