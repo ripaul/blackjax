@@ -86,11 +86,38 @@ def build_kernel(A, b, step_dist):
 
     """
 
+#    def truncate(dist):
+#        def sample(key, a, b, step_size=1., n=1):
+#            # Step 1: Compute CDF values
+#            pa = dist.cdf(a, scale=step_size)
+#            pb = dist.cdf(b, scale=step_size)
+#
+#            # Step 2: Uniform sample
+#            u = uniform(key)
+#
+#            # Step 3: Target CDF value
+#            p = pa + u * (pb - pa)
+#
+#            # Step 4: Inverse CDF
+#            y = dist.ppf(p, scale=step_size)
+#            
+#            return y
+#        
+#        def pdf(x, a, b, step_size=1.):
+#            def _in():
+#                pa = dist.cdf(a, scale=step_size)
+#                pb = dist.cdf(b, scale=step_size)
+#                return dist.pdf(x, scale=step_size) / (pb - pa)
+#
+#            return lax.cond(x > b, lambda : 0., lambda : lax.cond(a > x, lambda : 0., _in), )
+#
+#        return sample, pdf
+
     def truncate(dist):
-        def sample(key, a, b, stepsize=1., n=1):
+        def sample(key, a, b, n=1):
             # Step 1: Compute CDF values
-            pa = dist.cdf(a, scale=stepsize)
-            pb = dist.cdf(b, scale=stepsize)
+            pa = dist.cdf(a, )
+            pb = dist.cdf(b, )
 
             # Step 2: Uniform sample
             u = uniform(key)
@@ -99,17 +126,18 @@ def build_kernel(A, b, step_dist):
             p = pa + u * (pb - pa)
 
             # Step 4: Inverse CDF
-            y = dist.ppf(p, scale=stepsize)
+            y = dist.ppf(p, )
             
             return y
         
-        def pdf(x, a, b, stepsize=1.):
+        def pdf(x, a, b, step_size=1.):
             def _in():
-                pa = dist.cdf(a, scale=stepsize)
-                pb = dist.cdf(b, scale=stepsize)
-                return dist.pdf(x, scale=stepsize) / (pb - pa)
+                pa = dist.cdf(a)
+                pb = dist.cdf(b)
+                return dist.pdf(x) / (pb - pa)
 
-            return lax.cond(x > b, lambda : 0., lambda : lax.cond(a > x, lambda : 0., _in), )
+            p = lax.cond(x > b, lambda : 0., lambda : lax.cond(a > x, lambda : 0., _in), )
+            return p
 
         return sample, pdf
 
@@ -122,20 +150,15 @@ def build_kernel(A, b, step_dist):
         mask_pos = Au > eps
         mask_neg = Au < -eps
 
-        #s_max = lax.cond(jnp.any(mask_pos), lambda : jnp.min(s[mask_pos]), lambda :  jnp.inf)
-        #s_min = lax.cond(jnp.any(mask_neg), lambda : jnp.max(s[mask_neg]), lambda : -jnp.inf)
-        #s_max = lax.cond(jnp.any(mask_pos), lambda : jnp.min(jnp.where(mask_pos, s,  jnp.inf)), lambda :  jnp.inf)
-        #s_min = lax.cond(jnp.any(mask_neg), lambda : jnp.max(jnp.where(mask_neg, s, -jnp.inf)), lambda : -jnp.inf)
         s_max = jnp.min(jnp.where(mask_pos, s,  jnp.inf))
         s_min = jnp.max(jnp.where(mask_neg, s, -jnp.inf))
 
         s_min = lax.select(s_max > s_min, s_min, 0.,)
         s_max = lax.select(s_max > s_min, s_max, 0.,)
 
-        #return s_min, s_max
-        return lax.select(s_min > 0., s_min, 0.), s_max
+        return s_min, s_max
 
-    def transition_energy(state, new_state):
+    def transition_energy(state, new_state, step_size=1.):
         """Transition energy to go from `state` to `new_state`"""
         direction = state.chol @ (new_state.position - state.position - state.drift)
         step = jnp.linalg.norm(direction)
@@ -143,14 +166,20 @@ def build_kernel(A, b, step_dist):
 
         a, b = compute_intersections(state.position+state.drift, direction)
 
+        #proposal_logdensity = \
+        #      jnp.log(trunc_pdf(step, a, b, step_size=step_size)) \
+        #    - jnp.sum(jnp.log(state.chol.diagonal())) \
+        #    - jnp.log(step) 
         proposal_logdensity = \
-              jnp.log(trunc_pdf(step, a, b)) \
+              jnp.log(trunc_pdf(step, a, b, )) \
             - jnp.sum(jnp.log(state.chol.diagonal())) \
-            - jnp.log(step) \
-            + scipy.special.gammaln(1) \
-            - jnp.log(2) \
-            - jnp.log(jnp.pi) \
-            + 0
+            - jnp.log(step) 
+
+        ## norm const
+            #+ scipy.special.gammaln(len(direction) / 2.) \
+            #- jnp.log(2) \
+            #- jnp.log(jnp.pi) \
+            #+ 0
 
         return - new_state.logdensity + proposal_logdensity 
 
@@ -165,6 +194,7 @@ def build_kernel(A, b, step_dist):
         logdensity_fn: Callable, 
         vector_field_fn: Callable, 
         mass_matrix_fn: Callable, 
+        #step_size: float
     ) -> tuple[HRState, HRInfo]:
         """Generate a new sample with the HR kernel."""
         position, _, drift, _, chol = state
@@ -174,9 +204,9 @@ def build_kernel(A, b, step_dist):
         noise = generate_gaussian_noise(key_direction, position)
         direction = jnp.linalg.solve(chol, (noise / jnp.linalg.norm(noise)))
         a, b = compute_intersections(position+drift, direction)
-        step = trunc_sample(key_step, a, b)
+        #step = trunc_sample(key_step, a, b, step_size=step_size)
+        step = trunc_sample(key_step, a, b, )
 
-        #jax.debug.print(f"{(position+drift, direction, a, b)}")
         new_position = position + drift + step*direction
 
         new_logdensity = logdensity_fn(new_position)
@@ -186,6 +216,7 @@ def build_kernel(A, b, step_dist):
 
         new_state = HRState(new_position, new_logdensity, new_drift, new_metric, new_chol)
 
+        #log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         log_p_accept = compute_acceptance_ratio(state, new_state, )
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
@@ -204,7 +235,7 @@ def as_top_level_api(
     A: Array,
     b: Array,
     step_dist,
-    step_size,
+    #step_size=1.,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the HR kernel.
 
@@ -262,7 +293,9 @@ def as_top_level_api(
         return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, )
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, )
+        #return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn)
 
     return SamplingAlgorithm(init_fn, step_fn)
+
 
