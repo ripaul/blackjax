@@ -18,6 +18,7 @@ from .mcmc import barker
 from .mcmc import dynamic_hmc as _dynamic_hmc
 from .mcmc import elliptical_slice as _elliptical_slice
 from .mcmc import ghmc as _ghmc
+from .mcmc import dikin as _dikin
 from .mcmc import ehr as _ehr
 from .mcmc import hmc as _hmc
 from .mcmc import mala as _mala
@@ -114,6 +115,7 @@ additive_step_random_walk = GenerateSamplingAPI(
 
 additive_step_random_walk.register_factory("normal_random_walk", normal_random_walk)
 
+dikin = generate_top_level_api_from(_dikin)
 ehr = generate_top_level_api_from(_ehr)
 mclmc = generate_top_level_api_from(_mclmc)
 adjusted_mclmc_dynamic = generate_top_level_api_from(_adjusted_mclmc_dynamic)
