@@ -194,6 +194,7 @@ def build_kernel(A, b, step_dist):
         logdensity_fn: Callable, 
         vector_field_fn: Callable, 
         mass_matrix_fn: Callable, 
+        natural_gradient: bool = True
         #step_size: float
     ) -> tuple[HRState, HRInfo]:
         """Generate a new sample with the HR kernel."""
@@ -203,6 +204,9 @@ def build_kernel(A, b, step_dist):
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position)
         direction = jnp.linalg.solve(chol, (noise / jnp.linalg.norm(noise)))
+        drift = lax.cond(natural_gradient, 
+            lambda : jnp.linalg.solve(chol.T, jnp.linalg.solve(chol, drift)), # natural gradient
+            lambda : drift)                                                   # no natural gradient
         a, b = compute_intersections(position+drift, direction)
         #step = trunc_sample(key_step, a, b, step_size=step_size)
         step = trunc_sample(key_step, a, b, )
