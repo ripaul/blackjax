@@ -70,7 +70,9 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, vector_field_fn: Call
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
     metric = mass_matrix_fn(position)
-    chol = jnp.linalg.cholesky(metric)
+    #chol = jnp.linalg.cholesky(metric)
+    U, S, V = jnp.linalg.svd(metric)
+    chol = U @ jnp.sqrt(jnp.diag(S))
 
     return EHRState(position, logdensity, drift, metric, chol)
 
@@ -201,7 +203,7 @@ def build_kernel(A, b, step_dist):
         logdensity_fn: Callable, 
         vector_field_fn: Callable, 
         mass_matrix_fn: Callable, 
-        natural_gradient: bool = False
+        natural_gradient: bool = True
         #step_size: float
     ) -> tuple[EHRState, EHRInfo]:
         """Generate a new sample with the EHR kernel."""
@@ -223,7 +225,9 @@ def build_kernel(A, b, step_dist):
         new_logdensity = logdensity_fn(new_position)
         new_drift = vector_field_fn(new_position)
         new_metric = mass_matrix_fn(new_position)
-        new_chol = jnp.linalg.cholesky(new_metric)
+        #new_chol = jnp.linalg.cholesky(new_metric)
+        U, S, V = jnp.linalg.svd(new_metric)
+        new_chol = U @ jnp.sqrt(jnp.diag(S))
 
         #jax.debug.print('metric =\n {metric}', metric=new_metric, ordered=True)
         #jax.debug.print('chol =\n {chol}', chol=chol, ordered=True)
