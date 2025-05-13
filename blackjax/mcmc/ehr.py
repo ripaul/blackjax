@@ -26,11 +26,11 @@ from blackjax.base import SamplingAlgorithm
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 from blackjax.util import generate_gaussian_noise
 
-__all__ = ["HRState", "HRInfo", "init", "build_kernel", "as_top_level_api"]
+__all__ = ["EHRState", "EHRInfo", "init", "build_kernel", "as_top_level_api"]
 
 
-class HRInfo(NamedTuple):
-    """Additional information on the HR transition.
+class EHRInfo(NamedTuple):
+    """Additional information on the EHR transition.
 
     This additional information can be used for debugging or computing
     diagnostics.
@@ -49,10 +49,10 @@ class HRInfo(NamedTuple):
     b: float
     direction: ArrayTree
 
-class HRState(NamedTuple):
-    """State of the HR algorithm.
+class EHRState(NamedTuple):
+    """State of the EHR algorithm.
 
-    The HR algorithm takes one position of the chain and returns another
+    The EHR algorithm takes one position of the chain and returns another
     position. In order to make computations more efficient, we also store
     the current log-probability density, the current drift (typically the gradient)
     and the local metric (typically the hessian of the target density) of the
@@ -66,17 +66,17 @@ class HRState(NamedTuple):
     metric: ArrayTree
     chol: ArrayTree
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, vector_field_fn: Callable, mass_matrix_fn: Callable) -> HRState:
+def init(position: ArrayLikeTree, logdensity_fn: Callable, vector_field_fn: Callable, mass_matrix_fn: Callable) -> EHRState:
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
     metric = mass_matrix_fn(position)
     chol = jnp.linalg.cholesky(metric)
 
-    return HRState(position, logdensity, drift, metric, chol)
+    return EHRState(position, logdensity, drift, metric, chol)
 
 
 def build_kernel(A, b, step_dist):
-    """Build a HR kernel.
+    """Build a EHR kernel.
 
     Returns
     -------
@@ -165,15 +165,22 @@ def build_kernel(A, b, step_dist):
         direction = direction / step
 
         a, b = compute_intersections(state.position+state.drift, direction)
+        #jax.debug.print('mu = {mu}', mu=state.position+state.drift, ordered=True)
+        #jax.debug.print('a, b = {a}, {b}', a=a, b=b, ordered=True)
 
         #proposal_logdensity = \
         #      jnp.log(trunc_pdf(step, a, b, step_size=step_size)) \
         #    - jnp.sum(jnp.log(state.chol.diagonal())) \
         #    - jnp.log(step) 
+
+        trunc_p = trunc_pdf(step, a, b, )
+        chol_diag = state.chol.diagonal()
         proposal_logdensity = \
-              jnp.log(trunc_pdf(step, a, b, )) \
-            - jnp.sum(jnp.log(state.chol.diagonal())) \
+              jnp.log(trunc_p) \
+            - jnp.sum(jnp.log(chol_diag)) \
             - jnp.log(step) 
+
+        #jax.debug.print("density {density}", density=proposal_logdensity, ordered=True)
 
         ## norm const
             #+ scipy.special.gammaln(len(direction) / 2.) \
@@ -190,14 +197,14 @@ def build_kernel(A, b, step_dist):
 
     def kernel(
         rng_key: PRNGKey, 
-        state: HRState, 
+        state: EHRState, 
         logdensity_fn: Callable, 
         vector_field_fn: Callable, 
         mass_matrix_fn: Callable, 
-        natural_gradient: bool = True
+        natural_gradient: bool = False
         #step_size: float
-    ) -> tuple[HRState, HRInfo]:
-        """Generate a new sample with the HR kernel."""
+    ) -> tuple[EHRState, EHRInfo]:
+        """Generate a new sample with the EHR kernel."""
         position, _, drift, _, chol = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
@@ -218,14 +225,17 @@ def build_kernel(A, b, step_dist):
         new_metric = mass_matrix_fn(new_position)
         new_chol = jnp.linalg.cholesky(new_metric)
 
-        new_state = HRState(new_position, new_logdensity, new_drift, new_metric, new_chol)
+        #jax.debug.print('metric =\n {metric}', metric=new_metric, ordered=True)
+        #jax.debug.print('chol =\n {chol}', chol=chol, ordered=True)
+
+        new_state = EHRState(new_position, new_logdensity, new_drift, new_metric, new_chol)
 
         #log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         log_p_accept = compute_acceptance_ratio(state, new_state, )
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = HRInfo(p_accept, do_accept, a, b, direction)
+        info = EHRInfo(p_accept, do_accept, a, b, direction)
 
         return accepted_state, info
 
@@ -241,7 +251,7 @@ def as_top_level_api(
     step_dist,
     #step_size=1.,
 ) -> SamplingAlgorithm:
-    """Implements the (basic) user interface for the HR kernel.
+    """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
     cumbersome to manipulate. Since most users only need to specify the kernel
@@ -254,7 +264,7 @@ def as_top_level_api(
     Examples
     --------
 
-    A new HR kernel can be initialized and used with the following code:
+    A new EHR kernel can be initialized and used with the following code:
 
     .. code::
 
