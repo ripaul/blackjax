@@ -64,7 +64,8 @@ class EHRState(NamedTuple):
     logdensity: float
     drift: ArrayTree
     metric: ArrayTree
-    chol: ArrayTree
+    U: ArrayTree
+    sqrt_S: ArrayTree
 
 def init(position: ArrayLikeTree, logdensity_fn: Callable, vector_field_fn: Callable, mass_matrix_fn: Callable) -> EHRState:
     logdensity = logdensity_fn(position)
@@ -72,9 +73,8 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, vector_field_fn: Call
     metric = mass_matrix_fn(position)
     #chol = jnp.linalg.cholesky(metric)
     U, S, V = jnp.linalg.svd(metric)
-    chol = U @ jnp.sqrt(jnp.diag(S))
 
-    return EHRState(position, logdensity, drift, metric, chol)
+    return EHRState(position, logdensity, drift, metric, U, jnp.sqrt(S))
 
 
 def build_kernel(A, b, step_dist):
@@ -162,7 +162,7 @@ def build_kernel(A, b, step_dist):
 
     def transition_energy(state, new_state, step_size=1.):
         """Transition energy to go from `state` to `new_state`"""
-        direction = state.chol @ (new_state.position - state.position - state.drift)
+        direction = jnp.diag(state.sqrt_S) @ state.U.T @ (new_state.position - state.position - state.drift)
         step = jnp.linalg.norm(direction)
         direction = direction / step
 
@@ -176,7 +176,7 @@ def build_kernel(A, b, step_dist):
         #    - jnp.log(step) 
 
         trunc_p = trunc_pdf(step, a, b, )
-        chol_diag = state.chol.diagonal()
+        chol_diag = state.sqrt_S
         proposal_logdensity = \
               jnp.log(trunc_p) \
             - jnp.sum(jnp.log(chol_diag)) \
@@ -207,15 +207,15 @@ def build_kernel(A, b, step_dist):
         #step_size: float
     ) -> tuple[EHRState, EHRInfo]:
         """Generate a new sample with the EHR kernel."""
-        position, _, drift, _, chol = state
+        position, _, drift, _, U, sqrt_S = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position)
-        direction = jnp.linalg.solve(chol, (noise / jnp.linalg.norm(noise)))
+        direction = U @ jnp.diag(1./sqrt_S) @ (noise / jnp.linalg.norm(noise))
         drift = lax.cond(natural_gradient, 
-            lambda : jnp.linalg.solve(chol.T, jnp.linalg.solve(chol, drift)), # natural gradient
-            lambda : drift)                                                   # no natural gradient
+            lambda : U @ jnp.diag(1./sqrt_S) @ drift,   # natural gradient
+            lambda : drift)                             # no natural gradient
         a, b = compute_intersections(position+drift, direction)
         #step = trunc_sample(key_step, a, b, step_size=step_size)
         step = trunc_sample(key_step, a, b, )
@@ -226,13 +226,12 @@ def build_kernel(A, b, step_dist):
         new_drift = vector_field_fn(new_position)
         new_metric = mass_matrix_fn(new_position)
         #new_chol = jnp.linalg.cholesky(new_metric)
-        U, S, V = jnp.linalg.svd(new_metric)
-        new_chol = U @ jnp.sqrt(jnp.diag(S))
+        new_U, new_S, _ = jnp.linalg.svd(new_metric)
 
         #jax.debug.print('metric =\n {metric}', metric=new_metric, ordered=True)
         #jax.debug.print('chol =\n {chol}', chol=chol, ordered=True)
 
-        new_state = EHRState(new_position, new_logdensity, new_drift, new_metric, new_chol)
+        new_state = EHRState(new_position, new_logdensity, new_drift, new_metric, new_U, jnp.sqrt(new_S))
 
         #log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         log_p_accept = compute_acceptance_ratio(state, new_state, )
