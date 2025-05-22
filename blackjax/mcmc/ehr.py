@@ -202,12 +202,12 @@ def build_kernel(A, b, step_dist):
 
         trunc_p = trunc_pdf(step, a, b, )
         chol_diag = jnp.sqrt(state.S)
-        #jax.debug.print("trunc_p={trunc_p}, chol_diag={chol_diag}, step={step}\n", trunc_p=trunc_p, chol_diag=chol_diag, step=step, ordered=True)
         proposal_logdensity = \
               jnp.log(trunc_p) \
             + jnp.sum(jnp.log(chol_diag)) \
             - jnp.log(step) 
 
+        #jax.debug.print("log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", py=-new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, ordered=True)
         return -new_state.logdensity + proposal_logdensity 
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
@@ -231,7 +231,7 @@ def build_kernel(A, b, step_dist):
         position, _, drift_clip, drift, _, U, S = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
-        _s = grad_step_size * .5*step_size**2
+        _s = grad_step_size #* .5*step_size**2
 
         #jax.debug.print("{a}, {b}", a=_, b=b, ordered=True)
         #jax.debug.print("chose {s} from {a} and {b}", s=drift_clip, a=_s, b=b, ordered=True)
@@ -271,6 +271,7 @@ def build_kernel(A, b, step_dist):
         do_accept, p_accept, _ = info
 
         #jax.debug.print("accepted: {acc} with p={p_accept}\n", acc=do_accept, p_accept=p_accept, ordered=True)
+        #jax.debug.print("\n", )
 
         info = EHRInfo(p_accept, do_accept, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
 
