@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as scipy
 
-from jax.random import uniform, split, bernoulli
+from jax.random import uniform, split
 from jax import lax
 import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
@@ -126,6 +126,7 @@ def init(
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
     metric = mass_matrix_fn(position)
+
     #chol = jnp.linalg.cholesky(metric)
     U, S, _ = jnp.linalg.svd(metric)
 
@@ -183,17 +184,16 @@ def build_kernel(A, b, step_dist):
             #key_uniform, key_bernoulli = jax.random.split(key, 2)
 
             # Step 1: Compute CDF values
-            pa = dist.cdf(jnp.where(a >= 0, a, -a))
-            pb = dist.cdf(jnp.where(b >= 0, b, -b))
+            pa = dist.cdf(a)
+            pb = dist.cdf(b)
 
             # Step 2: Uniform sample & Bernoulli sample
             u = uniform(key)
-            #s = bernoulli(key_bernoulli, )
 
             # Step 3: Target CDF value
             p = pa + u * (pb - pa)
 
-            #jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
+            ## jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -213,16 +213,12 @@ def build_kernel(A, b, step_dist):
 
     trunc_sample, trunc_pdf = truncate(step_dist)
 
-    def transition_energy(state, new_state, step_size):
-        """Transition energy to go from `state` to `new_state`"""
+    def proposal_logdensity_fn(state, new_state, step_size):
         direction = (new_state.position - state.position - state.drift_clip*state.drift)
         step = jnp.linalg.norm(jnp.diag(jnp.sqrt(state.S)) @ state.U.T @ direction / step_size)
         direction = direction / step / step_size
 
         a, b = compute_intersections(state.position + state.drift_clip*state.drift, step_size * direction)
-        #jax.debug.print('mu = x + sg*gx = {x} + {sg}*{gx} = {mu}', x=state.position, sg=state.drift_clip, gx=state.drift, mu=state.position+state.drift_clip*state.drift, ordered=True)
-        #jax.debug.print('step, v = {step}, {direction}', step=step, direction=direction, ordered=True)
-        #jax.debug.print('a, b = {a}, {b}', a=a, b=b, ordered=True)
 
         trunc_p = trunc_pdf(step, a, b, )
         chol_diag = jnp.sqrt(state.S)
@@ -231,10 +227,19 @@ def build_kernel(A, b, step_dist):
             + jnp.sum(jnp.log(chol_diag)) \
             - jnp.log(step) 
 
-        #jax.debug.print("x={x}, y={y}, log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", 
-        #        x=state.position, y=new_state.position,
-        #        py=new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, ordered=True)
-        return -new_state.logdensity + proposal_logdensity 
+        ## jax.debug.print("x={x}, y=x+sg*gx+step*s*direction={x}+{sg}*{gx}+{step}*{s}*{v}={y}\n  log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", x=state.position, y=new_state.position, py=new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, sg=state.drift_clip, gx=state.drift, s=step_size, v=direction, ordered=True)
+    
+        return proposal_logdensity
+        
+    def transition_energy(state, new_state, step_size):
+        """Transition energy to go from `state` to `new_state`"""
+        ## jax.debug.print('log p(y)={py}', py=new_state.logdensity, ordered=True)
+        proposal_logdensity = lax.cond(jnp.isinf(new_state.logdensity), 
+                lambda state, new_state, stepsize: 0.,
+                proposal_logdensity_fn,
+                state, new_state, step_size
+            )
+        return -new_state.logdensity + proposal_logdensity
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
         transition_energy
@@ -256,29 +261,26 @@ def build_kernel(A, b, step_dist):
         """Generate a new sample with the EHR kernel."""
         position, _, drift_clip, drift, _, U, S = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
+        ### jax.debug.print('key direction={key_direction}', key_direction=key_direction)
 
         _s = grad_step_size #* .5*step_size**2
-
-        #jax.debug.print("{a}, {b}", a=_, b=b, ordered=True)
-        #jax.debug.print("chose {s} from {a} and {b}", s=drift_clip, a=_s, b=b, ordered=True)
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
         noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
         direction = U @ (jnp.diag(1./jnp.sqrt(S)) @ noise) # magnitude v=||Lu||_2
 
+        ## jax.debug.print('U={U}, S={S}', U=U, S=S, ordered=True)
+        ## jax.debug.print('v={direction}', direction=direction, ordered=True)
         a, b = compute_intersections(position + drift_clip * drift, step_size * direction)
+        ## jax.debug.print('[a,b] = [{a}, {b}]', a=a, b=b, ordered=True)
         step = trunc_sample(key_step, a, b, )
 
-        #jax.debug.print('{s} in [{a}, {b}]', s=step, a=a, b=b, ordered=True)
+        ## jax.debug.print('{s} in [{a}, {b}]', s=step, a=a, b=b, ordered=True)
 
-        #jax.debug.print('y_a = x + sg*gx + s_a*v = {ya}', ya=position+drift_clip*drift+a*step_size*direction, ordered=True)
-        #jax.debug.print('y_b = x + sg*gx + s_b*v = {ya}', ya=position+drift_clip*drift+b*step_size*direction, ordered=True)
-        #jax.debug.print('y   = x + sg*gx + s  *v = {ya}', ya=position+drift_clip*drift+step*step_size*direction, ordered=True)
-
-        ###jax.debug.print('mu = x + sg*gx = {x} + {sg}*{gx} = {mu}', x=position, sg=drift_clip, gx=drift, mu=position+drift_clip*drift, ordered=True)
-        ###jax.debug.print('step, v = {step}, {direction}', step=step, direction=direction, ordered=True)
-        ###jax.debug.print('a, b = {a}, {b}\n', a=a, b=b, ordered=True)
+        ## jax.debug.print('y_a = x + sg*gx + s_a*v = {ya}', ya=position+drift_clip*drift+a*step_size*direction, ordered=True)
+        ## jax.debug.print('y_b = x + sg*gx + s_b*v = {ya}', ya=position+drift_clip*drift+b*step_size*direction, ordered=True)
+        ## jax.debug.print('y   = x + sg*gx + s  *v = {ya}', ya=position+drift_clip*drift+step*step_size*direction, ordered=True)
 
         new_position = position + drift_clip * drift + step * step_size * direction
 
@@ -290,21 +292,15 @@ def build_kernel(A, b, step_dist):
         new_drift = lax.cond(natural_gradient, 
             lambda : new_U @ (jnp.diag(1./new_S) @ (new_U.T @ new_drift)),   # natural gradient
             lambda : new_drift)                             # no natural gradient
-        ##jax.debug.print('metric =\n {metric}', metric=new_metric, ordered=True)
-        ##jax.debug.print('chol =\n {chol}', chol=chol, ordered=True)
 
         _, clip = compute_intersections(new_position, new_drift)
         new_drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
         new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
 
-        #log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
-
-        #jax.debug.print("accepted: {acc} with p={p_accept}\n", acc=do_accept, p_accept=p_accept, ordered=True)
-        #jax.debug.print("\n", )
 
         info = EHRInfo(p_accept, do_accept, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
 
