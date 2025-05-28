@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as scipy
 
-from jax.random import uniform, split
+from jax.random import uniform, split, bernoulli
 from jax import lax
 import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
@@ -81,17 +81,36 @@ def compute_constraint_intersections(A, b, x, u, eps=1e-8):
     Au = (A @ u)
     s = (b - A @ x) / Au
 
-    mask_pos = Au > eps
     mask_neg = Au < -eps
+    mask_pos = Au > eps
 
-    s_max = jnp.min(jnp.where(mask_pos, s,  jnp.inf))
     s_min = jnp.max(jnp.where(mask_neg, s, -jnp.inf))
+    s_max = jnp.min(jnp.where(mask_pos, s,  jnp.inf))
 
     s_min = lax.select(s_max > s_min, s_min, 0.,)
     s_max = lax.select(s_max > s_min, s_max, 0.,)
 
     return s_min, s_max
 
+###def compute_constraint_intersections(A, b, x, u, eps=1e-8):
+###    Au = (A @ u)
+###    slacks = b - A @ x
+###    s = jnp.where(Au != 0, slacks / Au, jnp.inf)
+###
+###    mask_neg = s <= 0
+###    mask_pos = s >= 0
+###
+###    #s_min = jnp.where(jnp.any(mask_neg), jnp.max(jnp.where(mask_neg, s, -jnp.inf)), -jnp.inf)
+###    #s_max = jnp.where(jnp.any(mask_pos), jnp.min(jnp.where(mask_pos, s,  jnp.inf)),  jnp.inf)
+###
+###    s_min = lax.cond(jnp.any(mask_neg), lambda s: jnp.max(jnp.where(mask_neg, s, -jnp.inf)), lambda s: -jnp.inf, s)
+###    s_max = lax.cond(jnp.any(mask_pos), lambda s: jnp.min(jnp.where(mask_pos, s,  jnp.inf)), lambda s:  jnp.inf, s)
+###
+###
+###    s_min = lax.select(s_max > s_min, s_min, 0.,)
+###    s_max = lax.select(s_max > s_min, s_max, 0.,)
+###
+###    return s_min, s_max
 
 def init(
     position: ArrayLikeTree, 
@@ -161,15 +180,20 @@ def build_kernel(A, b, step_dist):
 
     def truncate(dist):
         def sample(key, a, b, n=1):
-            # Step 1: Compute CDF values
-            pa = dist.cdf(a, )
-            pb = dist.cdf(b, )
+            #key_uniform, key_bernoulli = jax.random.split(key, 2)
 
-            # Step 2: Uniform sample
+            # Step 1: Compute CDF values
+            pa = dist.cdf(jnp.where(a >= 0, a, -a))
+            pb = dist.cdf(jnp.where(b >= 0, b, -b))
+
+            # Step 2: Uniform sample & Bernoulli sample
             u = uniform(key)
+            #s = bernoulli(key_bernoulli, )
 
             # Step 3: Target CDF value
             p = pa + u * (pb - pa)
+
+            #jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -196,7 +220,7 @@ def build_kernel(A, b, step_dist):
         direction = direction / step / step_size
 
         a, b = compute_intersections(state.position + state.drift_clip*state.drift, step_size * direction)
-        #jax.debug.print('mu = x + gx = {x} + {gx} = {mu}', x=state.position, gx=state.drift, mu=state.position+state.drift, ordered=True)
+        #jax.debug.print('mu = x + sg*gx = {x} + {sg}*{gx} = {mu}', x=state.position, sg=state.drift_clip, gx=state.drift, mu=state.position+state.drift_clip*state.drift, ordered=True)
         #jax.debug.print('step, v = {step}, {direction}', step=step, direction=direction, ordered=True)
         #jax.debug.print('a, b = {a}, {b}', a=a, b=b, ordered=True)
 
@@ -207,7 +231,9 @@ def build_kernel(A, b, step_dist):
             + jnp.sum(jnp.log(chol_diag)) \
             - jnp.log(step) 
 
-        #jax.debug.print("log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", py=-new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, ordered=True)
+        #jax.debug.print("x={x}, y={y}, log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", 
+        #        x=state.position, y=new_state.position,
+        #        py=new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, ordered=True)
         return -new_state.logdensity + proposal_logdensity 
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
@@ -237,15 +263,22 @@ def build_kernel(A, b, step_dist):
         #jax.debug.print("chose {s} from {a} and {b}", s=drift_clip, a=_s, b=b, ordered=True)
 
         # sample the elliptical hit and run distribution
-        noise = generate_gaussian_noise(key_direction, position)
-        direction = U @ (jnp.diag(1./jnp.sqrt(S)) @ (noise / jnp.linalg.norm(noise)))
-        a, b = compute_intersections(position+drift_clip*drift, step_size * direction)
-        #step = trunc_sample(key_step, a, b, step_size=step_size)
+        noise = generate_gaussian_noise(key_direction, position) 
+        noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
+        direction = U @ (jnp.diag(1./jnp.sqrt(S)) @ noise) # magnitude v=||Lu||_2
+
+        a, b = compute_intersections(position + drift_clip * drift, step_size * direction)
         step = trunc_sample(key_step, a, b, )
 
-        ### jax.debug.print('mu = x + gx = {x} + {gx} = {mu}', x=position, gx=drift, mu=position+drift, ordered=True)
-        ### jax.debug.print('step, v = {step}, {direction}', step=step, direction=direction, ordered=True)
-        ### jax.debug.print('a, b = {a}, {b}\n', a=a, b=b, ordered=True)
+        #jax.debug.print('{s} in [{a}, {b}]', s=step, a=a, b=b, ordered=True)
+
+        #jax.debug.print('y_a = x + sg*gx + s_a*v = {ya}', ya=position+drift_clip*drift+a*step_size*direction, ordered=True)
+        #jax.debug.print('y_b = x + sg*gx + s_b*v = {ya}', ya=position+drift_clip*drift+b*step_size*direction, ordered=True)
+        #jax.debug.print('y   = x + sg*gx + s  *v = {ya}', ya=position+drift_clip*drift+step*step_size*direction, ordered=True)
+
+        ###jax.debug.print('mu = x + sg*gx = {x} + {sg}*{gx} = {mu}', x=position, sg=drift_clip, gx=drift, mu=position+drift_clip*drift, ordered=True)
+        ###jax.debug.print('step, v = {step}, {direction}', step=step, direction=direction, ordered=True)
+        ###jax.debug.print('a, b = {a}, {b}\n', a=a, b=b, ordered=True)
 
         new_position = position + drift_clip * drift + step * step_size * direction
 
