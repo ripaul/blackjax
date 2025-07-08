@@ -131,7 +131,7 @@ def init(
     U, S, _ = jnp.linalg.svd(metric)
 
     drift = lax.cond(natural_gradient, 
-        lambda : U @ (jnp.diag(1./S) @ (U.T @ drift)), # natural gradient
+        lambda : U @ ((U.T @ drift) / S), # natural gradient
         lambda : drift)                                     # no natural gradient
 
     _, b = compute_constraint_intersections(A, b, position, drift)
@@ -215,7 +215,7 @@ def build_kernel(A, b, step_dist):
 
     def proposal_logdensity_fn(state, new_state, step_size):
         direction = (new_state.position - state.position - state.drift_clip*state.drift)
-        step = jnp.linalg.norm(jnp.diag(jnp.sqrt(state.S)) @ state.U.T @ direction / step_size)
+        step = jnp.linalg.norm(state.U @ (jnp.sqrt(state.S) * direction / step_size))
         direction = direction / step / step_size
 
         a, b = compute_intersections(state.position + state.drift_clip*state.drift, step_size * direction)
@@ -268,7 +268,7 @@ def build_kernel(A, b, step_dist):
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
         noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
-        direction = U @ (jnp.diag(1./jnp.sqrt(S)) @ noise) # magnitude v=||Lu||_2
+        direction = (U.T @ noise) / jnp.sqrt(S) # magnitude v=||Lu||_2
 
         ## jax.debug.print('U={U}, S={S}', U=U, S=S, ordered=True)
         ## jax.debug.print('v={direction}', direction=direction, ordered=True)
@@ -290,7 +290,7 @@ def build_kernel(A, b, step_dist):
         #new_chol = jnp.linalg.cholesky(new_metric)
         new_U, new_S, _ = jnp.linalg.svd(new_metric)
         new_drift = lax.cond(natural_gradient, 
-            lambda : new_U @ (jnp.diag(1./new_S) @ (new_U.T @ new_drift)),   # natural gradient
+            lambda : new_U @ ((new_U.T @ new_drift) / new_S),   # natural gradient
             lambda : new_drift)                             # no natural gradient
 
         _, clip = compute_intersections(new_position, new_drift)
@@ -320,6 +320,7 @@ def as_top_level_api(
     grad_step_size: float = 1.,
     natural_gradient: bool = True,
 ) -> SamplingAlgorithm:
+    print("Using old impl.")
     """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
