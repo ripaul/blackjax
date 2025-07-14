@@ -1,9 +1,9 @@
-from . import ehr_chol as ehr
 from . import (
     adjusted_mclmc,
     adjusted_mclmc_dynamic,
     barker,
     dikin,
+    ehr,
     elliptical_slice,
     ghmc,
     hmc,

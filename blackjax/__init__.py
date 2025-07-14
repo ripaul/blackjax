@@ -19,7 +19,7 @@ from .mcmc import dynamic_hmc as _dynamic_hmc
 from .mcmc import elliptical_slice as _elliptical_slice
 from .mcmc import ghmc as _ghmc
 from .mcmc import dikin as _dikin
-from .mcmc import ehr_chol as _ehr
+from .mcmc import ehr as _ehr
 from .mcmc import hmc as _hmc
 from .mcmc import mala as _mala
 from .mcmc import mapla as _mapla

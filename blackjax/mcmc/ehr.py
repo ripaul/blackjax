@@ -28,7 +28,6 @@ from blackjax.util import generate_gaussian_noise
 
 __all__ = ["EHRState", "EHRInfo", "init", "build_kernel", "as_top_level_api"]
 
-
 class EHRState(NamedTuple):
     """State of the EHR algorithm.
 
@@ -44,9 +43,7 @@ class EHRState(NamedTuple):
     logdensity: float
     drift_clip: float
     drift: ArrayTree
-    #metric: ArrayTree
-    U: ArrayTree
-    S: ArrayTree
+    metric: NamedTuple
 
 class EHRInfo(NamedTuple):
     """Additional information on the EHR transition.
@@ -64,18 +61,16 @@ class EHRInfo(NamedTuple):
 
     acceptance_rate: float
     is_accepted: bool
-    #a: float
-    #b: float
-    #direction: ArrayTree
-    #step: float
+    a: float
+    b: float
+    direction: ArrayTree
+    step: float
 
-    #proposal_position: ArrayTree
-    #proposal_logdensity: float
-    #proposal_drift_clip: float
-    #proposal_drift: ArrayTree
-    #proposal_metric: ArrayTree
-    #proposal_U: ArrayTree
-    #proposal_S: ArrayTree
+    proposal_position: ArrayTree
+    proposal_logdensity: float
+    proposal_drift_clip: float
+    proposal_drift: ArrayTree
+    proposal_metric: NamedTuple
 
 def compute_constraint_intersections(A, b, x, u, eps=1e-8):
     Au = (A @ u)
@@ -92,6 +87,100 @@ def compute_constraint_intersections(A, b, x, u, eps=1e-8):
 
     return s_min, s_max
 
+class CholeskyMetric(NamedTuple):
+    metric: ArrayTree
+    L: ArrayTree
+
+class SVDMetric(NamedTuple):
+    metric: ArrayTree
+    U: ArrayTree
+    S: ArrayTree
+
+def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
+#def setup_metric(metric_backend, max_cond=jnp.inf, min_det=0, max_det=jnp.inf):
+    #jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
+    if metric_backend == 'chol':
+        def build_metric(M):
+            L = jnp.linalg.cholesky(M)
+            return Metric(M, L)
+
+        def sqrt_multiply(metric, x):
+            return metric.L @ x
+
+        def solve(metric, x):
+            return jax.scipy.linalg.cho_solve((metric.L, True), x)
+
+        def sqrt_solve(metric, x):
+            return jax.scipy.linalg.solve_triangular(metric.L, x, lower=True)
+
+        def logdet(metric):
+            return 2*jnp.sum(jnp.log(jnp.diag(metric.L)))
+
+        def det(metric):
+            return jnp.exp(logdet(metric))
+
+        Metric = CholeskyMetric
+
+    elif metric_backend == 'svd':
+        def build_metric(M):
+            U, S, _ = jnp.linalg.svd(M)
+
+            def dampen(S):
+                determinant = jnp.prod(S)
+                S_prime = (((S / S.min()) - 1) * (max_cond - 1) / (cond - 1) + 1)
+                S_prime *= jnp.prod(S_prime)**(-1/len(S)) * determinant**(1/len(S))
+                return S_prime
+
+            def deflate(S):
+                S *= jnp.prod(S)**(-1/len(S)) * max_det**(1/len(S))
+                return S
+
+            def inflate(S):
+                S *= jnp.prod(S)**(-1/len(S)) * min_det**(1/len(S))
+                return S
+
+            cond = S.max() / S.min()
+            det = jnp.prod(S)
+
+            S = jax.lax.cond(cond > max_cond, dampen, lambda S: S, operand=S)
+            S = jax.lax.cond(det < min_det, inflate, lambda S: S, operand=S)
+            S = jax.lax.cond(det > max_det, deflate, lambda S: S, operand=S)
+
+            #jax.debug.print("log cond = {cond}, log det = {det}", det=jnp.log(det), cond=jnp.log(cond))
+            #jax.debug.print("log cond' = {cond}, log det' = {det}", det=jnp.sum(jnp.log(S)), cond=jnp.log(S).max() - jnp.log(S).min())
+
+            is_ok = ~jnp.any(jnp.isnan(U))
+            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isnan(S)))
+            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isinf(U)))
+            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isinf(S)))
+            is_ok = jnp.logical_and(is_ok, ~jnp.any(S == 0))
+
+            return jax.lax.cond(is_ok, lambda : Metric(M, U, S), lambda : Metric(M, U=jnp.eye(M.shape[0]), S=jnp.ones(M.shape[0])))
+            #return Metric(M, U, S)
+
+        def sqrt_multiply(metric, x):
+            return metric.U @ (jnp.sqrt(metric.S) * x)
+
+        def solve(metric, x):
+            return metric.U @ ((metric.U.T @ x) / metric.S)
+
+        def sqrt_solve(metric, x):
+            return (metric.U.T @ x) / jnp.sqrt(metric.S)
+
+        def logdet(metric):
+            return jnp.sum(jnp.log(metric.S))
+
+        def det(metric):
+            return jnp.exp(logdet(metric))
+
+        Metric = SVDMetric
+
+    else:
+        raise ValueError(f"Unknown backend {metric_type}, has to be 'svd', 'chol' or 'auto'.")
+
+    return Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det
+
+
 def init(
     position: ArrayLikeTree, 
     logdensity_fn: Callable, 
@@ -101,24 +190,23 @@ def init(
     b, 
     step_size: float, 
     grad_step_size: float, 
-    natural_gradient: bool
+    metric_backend: str,
 ) -> EHRState:
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
-    metric = mass_matrix_fn(position)
+    metric = build_metric(mass_matrix_fn(position))
 
-    U, S, _ = jnp.linalg.svd(metric)
-    drift = U @ ((U.T @ drift) / S) # natural gradient
+    drift = solve(metric, drift) # natural gradient
 
     _, b = compute_constraint_intersections(A, b, position, drift)
-    _s = grad_step_size
+    _s = grad_step_size * .5*step_size**2
     drift_clip = lax.select(_s < .5*b, _s, .5*b)
 
-    #return EHRState(position, logdensity, drift_clip, drift, metric, U, S)
-    return EHRState(position, logdensity, drift_clip, drift, U, S)
+    return EHRState(position, logdensity, drift_clip, drift, metric)
 
 
-def build_kernel(A, b, step_dist):
+def build_kernel(A, b, step_dist, metric_backend):
     """Build a EHR kernel.
 
     Returns
@@ -128,9 +216,12 @@ def build_kernel(A, b, step_dist):
     information about the transition.
 
     """
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
 
     def truncate(dist):
         def sample(key, a, b, n=1):
+            #key_uniform, key_bernoulli = jax.random.split(key, 2)
+
             # Step 1: Compute CDF values
             pa = dist.cdf(a)
             pb = dist.cdf(b)
@@ -140,6 +231,8 @@ def build_kernel(A, b, step_dist):
 
             # Step 3: Target CDF value
             p = pa + u * (pb - pa)
+
+            ## jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -161,14 +254,13 @@ def build_kernel(A, b, step_dist):
 
     def proposal_logdensity_fn(state, new_state, step_size):
         direction = (new_state.position - state.position - state.drift_clip*state.drift)
-        step = jnp.linalg.norm(state.U @ (jnp.sqrt(state.S) * direction / step_size))
+        step = jnp.linalg.norm(sqrt_multiply(state.metric, direction / step_size))
         direction = direction / step / step_size
 
         a, b = compute_intersections(state.position + state.drift_clip*state.drift, step_size * direction)
 
         trunc_p = trunc_pdf(step, a, b, )
-        chol_diag = jnp.sqrt(state.S)
-        proposal_logdensity = jnp.log(trunc_p) + jnp.sum(jnp.log(chol_diag)) - jnp.log(step) 
+        proposal_logdensity = jnp.log(trunc_p) + logdet(state.metric) - jnp.log(step) 
 
         return proposal_logdensity
         
@@ -196,19 +288,17 @@ def build_kernel(A, b, step_dist):
         mass_matrix_fn: Callable, 
         step_size: float,
         grad_step_size: float,
-        natural_gradient: bool,
     ) -> tuple[EHRState, EHRInfo]:
         """Generate a new sample with the EHR kernel."""
-        #position, _, drift_clip, drift, _, U, S = state
-        position, _, drift_clip, drift, U, S = state
+        position, _, drift_clip, drift, metric = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
-        _s = grad_step_size
+        _s = grad_step_size #* .5*step_size**2
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
         noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
-        direction = (U.T @ noise) / jnp.sqrt(S) # magnitude v=||Lu||_2
+        direction = sqrt_solve(metric, noise) # magnitude v=||Lu||_2
 
         a, b = compute_intersections(position + drift_clip * drift, step_size * direction)
         step = trunc_sample(key_step, a, b, )
@@ -217,21 +307,20 @@ def build_kernel(A, b, step_dist):
 
         new_logdensity = logdensity_fn(new_position)
         new_drift = vector_field_fn(new_position)
-        new_metric = mass_matrix_fn(new_position)
-        new_U, new_S, _ = jnp.linalg.svd(new_metric)
-        new_drift = new_U @ ((new_U.T @ new_drift) / new_S)
+        new_metric = build_metric(mass_matrix_fn(new_position))
+        new_drift = solve(new_metric, new_drift) # natural gradient
 
         _, clip = compute_intersections(new_position, new_drift)
         new_drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
-        #new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
-        new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_U, new_S)
+        new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_metric)
 
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = EHRInfo(p_accept, do_accept)#, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
+        info = EHRInfo(p_accept, do_accept, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric)
+        #info = EHRInfo(p_accept, do_accept)
 
         return accepted_state, info
 
@@ -247,9 +336,9 @@ def as_top_level_api(
     step_dist,
     step_size,
     grad_step_size: float = 1.,
-    natural_gradient: bool = True,
+    metric_backend: str = 'svd',
 ) -> SamplingAlgorithm:
-    print("Using old impl.")
+    #print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
@@ -299,14 +388,14 @@ def as_top_level_api(
 
     """
 
-    kernel = build_kernel(A, b, step_dist)
+    kernel = build_kernel(A, b, step_dist, metric_backend)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, natural_gradient)
+        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, metric_backend)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, step_size, grad_step_size, natural_gradient)
+        return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, step_size, grad_step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 
