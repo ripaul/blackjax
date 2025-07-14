@@ -20,14 +20,13 @@ import jax.numpy as jnp
 from blackjax.types import ArrayTree
 from blackjax.util import generate_gaussian_noise
 
-__all__ = ["overdamped_langevin"]
+__all__ = ["overdamped_langevin", "overdamped_manifold_langevin"]
 
 
 class DiffusionState(NamedTuple):
     position: ArrayTree
     logdensity: float
     logdensity_grad: ArrayTree
-
 
 def overdamped_langevin(logdensity_grad_fn):
     """Euler solver for overdamped Langevin diffusion."""
@@ -44,5 +43,33 @@ def overdamped_langevin(logdensity_grad_fn):
 
         logdensity, logdensity_grad = logdensity_grad_fn(position, *batch)
         return DiffusionState(position, logdensity, logdensity_grad)
+
+    return one_step
+
+class ManifoldDiffusionState(NamedTuple):
+    position: ArrayTree
+    logdensity: float
+    logdensity_grad: ArrayTree
+    metric: NamedTuple
+
+def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve):
+    """Euler solver for overdamped Langevin diffusion."""
+
+    def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
+        position, _, logdensity_grad, metric = state
+        noise = generate_gaussian_noise(rng_key, position)
+
+        noise = sqrt_solve(metric, noise)
+
+        position = jax.tree_util.tree_map(
+            lambda p, g, n: p + step_size * g + jnp.sqrt(2 * step_size) * n,
+            position,
+            logdensity_grad,
+            noise,
+        )
+
+        logdensity, logdensity_grad = logdensity_grad_fn(position, *batch)
+        metric = metric_fn(position)
+        return ManifoldDiffusionState(position, logdensity, logdensity_grad, metric)
 
     return one_step

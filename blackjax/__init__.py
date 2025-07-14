@@ -19,9 +19,11 @@ from .mcmc import dynamic_hmc as _dynamic_hmc
 from .mcmc import elliptical_slice as _elliptical_slice
 from .mcmc import ghmc as _ghmc
 from .mcmc import dikin as _dikin
-from .mcmc import ehr as _ehr
+from .mcmc import ehr_chol as _ehr
 from .mcmc import hmc as _hmc
 from .mcmc import mala as _mala
+from .mcmc import mapla as _mapla
+from .mcmc import smmala as _smmala
 from .mcmc import marginal_latent_gaussian
 from .mcmc import mclmc as _mclmc
 from .mcmc import nuts as _nuts
@@ -106,6 +108,8 @@ irmh = GenerateSamplingAPI(
 dynamic_hmc = generate_top_level_api_from(_dynamic_hmc)
 rmhmc = generate_top_level_api_from(_rmhmc)
 mala = generate_top_level_api_from(_mala)
+mapla = generate_top_level_api_from(_mapla)
+smmala = generate_top_level_api_from(_smmala)
 mgrad_gaussian = generate_top_level_api_from(marginal_latent_gaussian)
 orbital_hmc = generate_top_level_api_from(periodic_orbital)
 

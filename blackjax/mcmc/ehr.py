@@ -44,7 +44,7 @@ class EHRState(NamedTuple):
     logdensity: float
     drift_clip: float
     drift: ArrayTree
-    metric: ArrayTree
+    #metric: ArrayTree
     U: ArrayTree
     S: ArrayTree
 
@@ -64,18 +64,18 @@ class EHRInfo(NamedTuple):
 
     acceptance_rate: float
     is_accepted: bool
-    a: float
-    b: float
-    direction: ArrayTree
-    step: float
+    #a: float
+    #b: float
+    #direction: ArrayTree
+    #step: float
 
-    proposal_position: ArrayTree
-    proposal_logdensity: float
-    proposal_drift_clip: float
-    proposal_drift: ArrayTree
-    proposal_metric: ArrayTree
-    proposal_U: ArrayTree
-    proposal_S: ArrayTree
+    #proposal_position: ArrayTree
+    #proposal_logdensity: float
+    #proposal_drift_clip: float
+    #proposal_drift: ArrayTree
+    #proposal_metric: ArrayTree
+    #proposal_U: ArrayTree
+    #proposal_S: ArrayTree
 
 def compute_constraint_intersections(A, b, x, u, eps=1e-8):
     Au = (A @ u)
@@ -92,26 +92,6 @@ def compute_constraint_intersections(A, b, x, u, eps=1e-8):
 
     return s_min, s_max
 
-###def compute_constraint_intersections(A, b, x, u, eps=1e-8):
-###    Au = (A @ u)
-###    slacks = b - A @ x
-###    s = jnp.where(Au != 0, slacks / Au, jnp.inf)
-###
-###    mask_neg = s <= 0
-###    mask_pos = s >= 0
-###
-###    #s_min = jnp.where(jnp.any(mask_neg), jnp.max(jnp.where(mask_neg, s, -jnp.inf)), -jnp.inf)
-###    #s_max = jnp.where(jnp.any(mask_pos), jnp.min(jnp.where(mask_pos, s,  jnp.inf)),  jnp.inf)
-###
-###    s_min = lax.cond(jnp.any(mask_neg), lambda s: jnp.max(jnp.where(mask_neg, s, -jnp.inf)), lambda s: -jnp.inf, s)
-###    s_max = lax.cond(jnp.any(mask_pos), lambda s: jnp.min(jnp.where(mask_pos, s,  jnp.inf)), lambda s:  jnp.inf, s)
-###
-###
-###    s_min = lax.select(s_max > s_min, s_min, 0.,)
-###    s_max = lax.select(s_max > s_min, s_max, 0.,)
-###
-###    return s_min, s_max
-
 def init(
     position: ArrayLikeTree, 
     logdensity_fn: Callable, 
@@ -127,18 +107,15 @@ def init(
     drift = vector_field_fn(position)
     metric = mass_matrix_fn(position)
 
-    #chol = jnp.linalg.cholesky(metric)
     U, S, _ = jnp.linalg.svd(metric)
-
-    drift = lax.cond(natural_gradient, 
-        lambda : U @ ((U.T @ drift) / S), # natural gradient
-        lambda : drift)                                     # no natural gradient
+    drift = U @ ((U.T @ drift) / S) # natural gradient
 
     _, b = compute_constraint_intersections(A, b, position, drift)
-    _s = grad_step_size * .5*step_size**2
+    _s = grad_step_size
     drift_clip = lax.select(_s < .5*b, _s, .5*b)
 
-    return EHRState(position, logdensity, drift_clip, drift, metric, U, S)
+    #return EHRState(position, logdensity, drift_clip, drift, metric, U, S)
+    return EHRState(position, logdensity, drift_clip, drift, U, S)
 
 
 def build_kernel(A, b, step_dist):
@@ -152,37 +129,8 @@ def build_kernel(A, b, step_dist):
 
     """
 
-#    def truncate(dist):
-#        def sample(key, a, b, step_size=1., n=1):
-#            # Step 1: Compute CDF values
-#            pa = dist.cdf(a, scale=step_size)
-#            pb = dist.cdf(b, scale=step_size)
-#
-#            # Step 2: Uniform sample
-#            u = uniform(key)
-#
-#            # Step 3: Target CDF value
-#            p = pa + u * (pb - pa)
-#
-#            # Step 4: Inverse CDF
-#            y = dist.ppf(p, scale=step_size)
-#            
-#            return y
-#        
-#        def pdf(x, a, b, step_size=1.):
-#            def _in():
-#                pa = dist.cdf(a, scale=step_size)
-#                pb = dist.cdf(b, scale=step_size)
-#                return dist.pdf(x, scale=step_size) / (pb - pa)
-#
-#            return lax.cond(x > b, lambda : 0., lambda : lax.cond(a > x, lambda : 0., _in), )
-#
-#        return sample, pdf
-
     def truncate(dist):
         def sample(key, a, b, n=1):
-            #key_uniform, key_bernoulli = jax.random.split(key, 2)
-
             # Step 1: Compute CDF values
             pa = dist.cdf(a)
             pb = dist.cdf(b)
@@ -192,8 +140,6 @@ def build_kernel(A, b, step_dist):
 
             # Step 3: Target CDF value
             p = pa + u * (pb - pa)
-
-            ## jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -222,18 +168,12 @@ def build_kernel(A, b, step_dist):
 
         trunc_p = trunc_pdf(step, a, b, )
         chol_diag = jnp.sqrt(state.S)
-        proposal_logdensity = \
-              jnp.log(trunc_p) \
-            + jnp.sum(jnp.log(chol_diag)) \
-            - jnp.log(step) 
+        proposal_logdensity = jnp.log(trunc_p) + jnp.sum(jnp.log(chol_diag)) - jnp.log(step) 
 
-        ## jax.debug.print("x={x}, y=x+sg*gx+step*s*direction={x}+{sg}*{gx}+{step}*{s}*{v}={y}\n  log p(y)={py}, log p(y|x)={pyx}, a={a}, b={b}, step={step}", x=state.position, y=new_state.position, py=new_state.logdensity, pyx=proposal_logdensity, a=a, b=b, step=step, sg=state.drift_clip, gx=state.drift, s=step_size, v=direction, ordered=True)
-    
         return proposal_logdensity
         
     def transition_energy(state, new_state, step_size):
         """Transition energy to go from `state` to `new_state`"""
-        ## jax.debug.print('log p(y)={py}', py=new_state.logdensity, ordered=True)
         proposal_logdensity = lax.cond(jnp.isinf(new_state.logdensity), 
                 lambda state, new_state, stepsize: 0.,
                 proposal_logdensity_fn,
@@ -259,50 +199,39 @@ def build_kernel(A, b, step_dist):
         natural_gradient: bool,
     ) -> tuple[EHRState, EHRInfo]:
         """Generate a new sample with the EHR kernel."""
-        position, _, drift_clip, drift, _, U, S = state
+        #position, _, drift_clip, drift, _, U, S = state
+        position, _, drift_clip, drift, U, S = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
-        ### jax.debug.print('key direction={key_direction}', key_direction=key_direction)
 
-        _s = grad_step_size #* .5*step_size**2
+        _s = grad_step_size
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
         noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
         direction = (U.T @ noise) / jnp.sqrt(S) # magnitude v=||Lu||_2
 
-        ## jax.debug.print('U={U}, S={S}', U=U, S=S, ordered=True)
-        ## jax.debug.print('v={direction}', direction=direction, ordered=True)
         a, b = compute_intersections(position + drift_clip * drift, step_size * direction)
-        ## jax.debug.print('[a,b] = [{a}, {b}]', a=a, b=b, ordered=True)
         step = trunc_sample(key_step, a, b, )
-
-        ## jax.debug.print('{s} in [{a}, {b}]', s=step, a=a, b=b, ordered=True)
-
-        ## jax.debug.print('y_a = x + sg*gx + s_a*v = {ya}', ya=position+drift_clip*drift+a*step_size*direction, ordered=True)
-        ## jax.debug.print('y_b = x + sg*gx + s_b*v = {ya}', ya=position+drift_clip*drift+b*step_size*direction, ordered=True)
-        ## jax.debug.print('y   = x + sg*gx + s  *v = {ya}', ya=position+drift_clip*drift+step*step_size*direction, ordered=True)
 
         new_position = position + drift_clip * drift + step * step_size * direction
 
         new_logdensity = logdensity_fn(new_position)
         new_drift = vector_field_fn(new_position)
         new_metric = mass_matrix_fn(new_position)
-        #new_chol = jnp.linalg.cholesky(new_metric)
         new_U, new_S, _ = jnp.linalg.svd(new_metric)
-        new_drift = lax.cond(natural_gradient, 
-            lambda : new_U @ ((new_U.T @ new_drift) / new_S),   # natural gradient
-            lambda : new_drift)                             # no natural gradient
+        new_drift = new_U @ ((new_U.T @ new_drift) / new_S)
 
         _, clip = compute_intersections(new_position, new_drift)
         new_drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
-        new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
+        #new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
+        new_state = EHRState(new_position, new_logdensity, new_drift_clip, new_drift, new_U, new_S)
 
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = EHRInfo(p_accept, do_accept, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
+        info = EHRInfo(p_accept, do_accept)#, a, b, direction, step, new_position, new_logdensity, new_drift_clip, new_drift, new_metric, new_U, new_S)
 
         return accepted_state, info
 

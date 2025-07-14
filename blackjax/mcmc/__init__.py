@@ -1,19 +1,21 @@
+from . import ehr_chol as ehr
 from . import (
     adjusted_mclmc,
     adjusted_mclmc_dynamic,
     barker,
     dikin,
     elliptical_slice,
-    ehr,
     ghmc,
     hmc,
     mala,
+    mapla,
     marginal_latent_gaussian,
     mclmc,
     nuts,
     periodic_orbital,
     random_walk,
     rmhmc,
+    smmala,
 )
 
 __all__ = [
@@ -25,6 +27,7 @@ __all__ = [
     "ehr",
     "rmhmc",
     "mala",
+    "mapla",
     "nuts",
     "periodic_orbital",
     "marginal_latent_gaussian",
@@ -32,4 +35,5 @@ __all__ = [
     "mclmc",
     "adjusted_mclmc_dynamic",
     "adjusted_mclmc",
+    "smmala",
 ]
