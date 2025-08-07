@@ -64,6 +64,7 @@ from typing import Callable, NamedTuple, Optional
 
 import jax
 from jax import numpy as jnp
+from jax import numpy as jsc
 
 from blackjax.base import SamplingAlgorithm
 from blackjax.mcmc import proposal
@@ -125,7 +126,7 @@ def dikin_proposal(A, b):
 
     def propose(key, x, L, step_size):
         z = generate_gaussian_noise(key, x)
-        diff = jnp.linalg.solve(step_size*L, z)
+        diff = jsc.linalg.solve_triangular(step_size*L.T, z)
         y = x + diff
         new_L = jnp.linalg.cholesky(dikin(y))
         return y, new_L
@@ -137,7 +138,7 @@ def dikin_proposal(A, b):
         
         d = y.shape[0]
         diff = y - x
-        z = L @ diff
+        z = L.T @ diff
         exponent = -0.5 * jnp.dot(z, z)
 
         log_det = jnp.sum(jnp.log(jnp.diag(L)))  # log(det L)
