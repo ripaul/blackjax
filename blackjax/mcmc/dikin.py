@@ -64,7 +64,7 @@ from typing import Callable, NamedTuple, Optional
 
 import jax
 from jax import numpy as jnp
-from jax import numpy as jsc
+from jax import scipy as jsc
 
 from blackjax.base import SamplingAlgorithm
 from blackjax.mcmc import proposal
