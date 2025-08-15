@@ -206,7 +206,7 @@ def init(
     return EHRState(position, logdensity, drift_clip, drift, metric)
 
 
-def build_kernel(A, b, step_dist, metric_backend):
+def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
     """Build a EHR kernel.
 
     Returns
@@ -216,7 +216,7 @@ def build_kernel(A, b, step_dist, metric_backend):
     information about the transition.
 
     """
-    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     def truncate(dist):
         def sample(key, a, b, n=1):
@@ -293,7 +293,7 @@ def build_kernel(A, b, step_dist, metric_backend):
         position, _, drift_clip, drift, metric = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
-        _s = grad_step_size #* .5*step_size**2
+        _s = .5*grad_step_size**2
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
@@ -337,6 +337,9 @@ def as_top_level_api(
     step_size,
     grad_step_size: float = 1.,
     metric_backend: str = 'svd',
+    max_cond=1e2, 
+    min_det=1e1, 
+    max_det=1e2,
 ) -> SamplingAlgorithm:
     #print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
@@ -388,7 +391,7 @@ def as_top_level_api(
 
     """
 
-    kernel = build_kernel(A, b, step_dist, metric_backend)
+    kernel = build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
