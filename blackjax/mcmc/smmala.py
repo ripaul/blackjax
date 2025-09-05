@@ -159,8 +159,8 @@ class SMMALAInfo(NamedTuple):
     is_accepted: bool
 
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, metric_backend: str) -> SMMALAState:
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
+    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
@@ -170,7 +170,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, 
 
     return SMMALAState(position, logdensity, grad, metric)
 
-def build_kernel(metric_backend):
+def build_kernel(metric_backend, max_cond, min_det, max_det):
     """Build a MALA kernel.
 
     Returns
@@ -181,12 +181,14 @@ def build_kernel(metric_backend):
 
     """
 
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
+    # computes -log p(y)q(x|y) where x is `state` and y is `new_state`
     def transition_energy(state, new_state, step_size):
         """Transition energy to go from `state` to `new_state` using a Riemannian preconditioned proposal."""
+
         theta = jax.tree_util.tree_map(
-            lambda x, new_x, g: x - new_x - step_size * g,
+            lambda x, y, gy: x - y - step_size * gy,
             state.position,
             new_state.position,
             new_state.logdensity_grad,
@@ -204,7 +206,7 @@ def build_kernel(metric_backend):
 
         log_det_H = logdet(new_state.metric)
 
-        return -new_state.logdensity + 0.25 * (1.0 / step_size) * theta_dot - 0.5 * log_det_H
+        return -new_state.logdensity + (0.25 / step_size) * theta_dot - 0.5 * log_det_H
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
         transition_energy
@@ -216,7 +218,7 @@ def build_kernel(metric_backend):
     ) -> tuple[SMMALAState, SMMALAInfo]:
         """Generate a new sample with the MALA kernel."""
         grad_fn = jax.value_and_grad(logdensity_fn)
-        integrator = diffusions.overdamped_manifold_langevin(grad_fn, metric_fn, sqrt_solve)
+        integrator = diffusions.overdamped_manifold_langevin(grad_fn, metric_fn, sqrt_solve, solve)
 
         key_integrator, key_rmh = jax.random.split(rng_key)
 
@@ -238,7 +240,10 @@ def as_top_level_api(
     logdensity_fn: Callable,
     metric_fn: Callable,
     step_size: float,
-    metric_backend: str = 'svd',
+    metric_backend: str = 'svd', 
+    max_cond=1e2,
+    min_det=1e1,
+    max_det=1e2,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
 
@@ -289,14 +294,14 @@ def as_top_level_api(
 
     """
 
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
-    kernel = build_kernel(metric_backend)
+    kernel = build_kernel(metric_backend, max_cond, min_det, max_det)
     _metric_fn = generate_build_metric(metric_fn)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _metric_fn, metric_backend)
+        return init(position, logdensity_fn, _metric_fn, metric_backend, max_cond, min_det, max_det)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(rng_key, state, logdensity_fn, _metric_fn, step_size)

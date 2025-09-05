@@ -208,6 +208,9 @@ def compute_asymmetric_acceptance_ratio(transition_energy_fn: Callable) -> Calla
         new_energy = transition_energy_fn(initial_state, state, **energy_params)
         prev_energy = transition_energy_fn(state, initial_state, **energy_params)
         log_p_accept = safe_energy_diff(prev_energy, new_energy)
+        # p(y)q(x|y) / p(x)q(y|x)
+        # e^{-H(y)} / e^{-H(x)}
+        # e^{H(x) - H(y)}
         return log_p_accept
 
     return compute_acceptance_ratio

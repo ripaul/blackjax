@@ -31,6 +31,9 @@ def as_top_level_api(
     b: Array,
     step_size: float,
     metric_backend: str = 'svd',
+    max_cond=1e2, 
+    min_det=1e1, 
+    max_det=1e2,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
 
@@ -80,15 +83,15 @@ def as_top_level_api(
     A ``SamplingAlgorithm``.
 
     """
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     dikin, _, _ = dikin_proposal(A, b)
-    kernel = build_kernel(metric_backend)
+    kernel = build_kernel(metric_backend, max_cond, min_det, max_det)
     _metric_fn = generate_build_metric(dikin)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _metric_fn, metric_backend)
+        return init(position, logdensity_fn, _metric_fn, metric_backend, max_cond, min_det, max_det)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(rng_key, state, logdensity_fn, _metric_fn, step_size)

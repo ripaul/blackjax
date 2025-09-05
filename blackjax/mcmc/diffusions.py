@@ -52,11 +52,11 @@ class ManifoldDiffusionState(NamedTuple):
     logdensity_grad: ArrayTree
     metric: NamedTuple
 
-def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve):
+def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solve):
     """Euler solver for overdamped Langevin diffusion."""
 
     def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
-        position, _, logdensity_grad, metric = state
+        position, _, grad, metric = state
         noise = generate_gaussian_noise(rng_key, position)
 
         noise = sqrt_solve(metric, noise)
@@ -64,12 +64,14 @@ def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve):
         position = jax.tree_util.tree_map(
             lambda p, g, n: p + step_size * g + jnp.sqrt(2 * step_size) * n,
             position,
-            logdensity_grad,
+            grad,
             noise,
         )
 
-        logdensity, logdensity_grad = logdensity_grad_fn(position, *batch)
+        logdensity, grad = logdensity_grad_fn(position, *batch)
         metric = metric_fn(position)
-        return ManifoldDiffusionState(position, logdensity, logdensity_grad, metric)
+        grad = solve(metric, grad) # natural gradient
+
+        return ManifoldDiffusionState(position, logdensity, grad, metric)
 
     return one_step

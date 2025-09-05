@@ -190,9 +190,9 @@ def init(
     b, 
     step_size: float, 
     grad_step_size: float, 
-    metric_backend: str,
+    metric_backend: str, max_cond, min_det, max_det,
 ) -> EHRState:
-    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend)
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
     metric = build_metric(mass_matrix_fn(position))
@@ -200,7 +200,7 @@ def init(
     drift = solve(metric, drift) # natural gradient
 
     _, b = compute_constraint_intersections(A, b, position, drift)
-    _s = grad_step_size * .5*step_size**2
+    _s = .5*grad_step_size**2
     drift_clip = lax.select(_s < .5*b, _s, .5*b)
 
     return EHRState(position, logdensity, drift_clip, drift, metric)
@@ -335,7 +335,7 @@ def as_top_level_api(
     b: Array,
     step_dist,
     step_size,
-    grad_step_size: float = 1.,
+    grad_step_size = None,
     metric_backend: str = 'svd',
     max_cond=1e2, 
     min_det=1e1, 
@@ -391,11 +391,13 @@ def as_top_level_api(
 
     """
 
+    grad_step_size = step_size if grad_step_size is None else grad_step_size
+
     kernel = build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, metric_backend)
+        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, metric_backend, max_cond, min_det, max_det)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, step_size, grad_step_size)
