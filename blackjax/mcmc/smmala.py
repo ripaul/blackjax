@@ -44,13 +44,13 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
-            return metric.L @ x
+            return metric.L.T @ x
 
         def solve(metric, x):
             return jax.scipy.linalg.cho_solve((metric.L, True), x)
 
         def sqrt_solve(metric, x):
-            return jax.scipy.linalg.solve_triangular(metric.L, x, lower=True)
+            return jax.scipy.linalg.solve_triangular(metric.L.T, x, lower=False)
 
         def logdet(metric):
             return 2*jnp.sum(jnp.log(jnp.diag(metric.L)))

@@ -102,16 +102,17 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
+            L = lax.select(jnp.isnan(L).any(), jnp.identity(M.shape[0]), L)
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
-            return metric.L @ x
+            return metric.L.T @ x
 
         def solve(metric, x):
             return jax.scipy.linalg.cho_solve((metric.L, True), x)
 
         def sqrt_solve(metric, x):
-            return jax.scipy.linalg.solve_triangular(metric.L, x, lower=True)
+            return jax.scipy.linalg.solve_triangular(metric.L.T, x, lower=False)
 
         def logdet(metric):
             return 2*jnp.sum(jnp.log(jnp.diag(metric.L)))
@@ -142,9 +143,9 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
             cond = S.max() / S.min()
             det = jnp.prod(S)
 
-            S = jax.lax.cond(cond > max_cond, dampen, lambda S: S, operand=S)
-            S = jax.lax.cond(det < min_det, inflate, lambda S: S, operand=S)
-            S = jax.lax.cond(det > max_det, deflate, lambda S: S, operand=S)
+            S = lax.cond(cond > max_cond, dampen, lambda S: S, operand=S)
+            S = lax.cond(det < min_det, inflate, lambda S: S, operand=S)
+            S = lax.cond(det > max_det, deflate, lambda S: S, operand=S)
 
             #jax.debug.print("log cond = {cond}, log det = {det}", det=jnp.log(det), cond=jnp.log(cond))
             #jax.debug.print("log cond' = {cond}, log det' = {det}", det=jnp.sum(jnp.log(S)), cond=jnp.log(S).max() - jnp.log(S).min())
@@ -197,11 +198,11 @@ def init(
     drift = vector_field_fn(position)
     metric = build_metric(mass_matrix_fn(position))
 
-    drift = solve(metric, drift) # natural gradient
+    drift = solve(metric, drift) # natural gradient H^{-1}g
 
-    _, b = compute_constraint_intersections(A, b, position, drift)
+    _, clip = compute_constraint_intersections(A, b, position, drift)
     _s = .5*grad_step_size**2
-    drift_clip = lax.select(_s < .5*b, _s, .5*b)
+    drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
     return EHRState(position, logdensity, drift_clip, drift, metric)
 
@@ -217,6 +218,8 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
 
     """
     Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
+
+    dim = A.shape[-1]
 
     def truncate(dist):
         def sample(key, a, b, n=1):
@@ -253,19 +256,21 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
     trunc_sample, trunc_pdf = truncate(step_dist)
 
     def proposal_logdensity_fn(state, new_state, step_size):
-        direction = (new_state.position - state.position - state.drift_clip*state.drift)
-        step = jnp.linalg.norm(sqrt_multiply(state.metric, direction / step_size))
-        direction = direction / step / step_size
+        delta = (new_state.position - state.position - state.drift_clip*state.drift) # Delta = y - x - g
+        step = jnp.linalg.norm(sqrt_multiply(state.metric, delta / step_size)) # gamma = || L^-T Delta ||
+        direction = delta / step / step_size # v = Delta / gamma
 
-        a, b = compute_intersections(state.position + state.drift_clip*state.drift, step_size * direction)
+        a, b = compute_intersections(state.position + state.drift_clip * state.drift, step_size * direction)
 
         trunc_p = trunc_pdf(step, a, b, )
-        proposal_logdensity = jnp.log(trunc_p) + logdet(state.metric) - jnp.log(step) 
+        proposal_logdensity = jnp.log(trunc_p) + .5*logdet(state.metric) - (dim - 1)*jnp.log(step) 
 
         return proposal_logdensity
         
     def transition_energy(state, new_state, step_size):
         """Transition energy to go from `state` to `new_state`"""
+
+        # makes sure we don't compute meaningless proposal densities for infeasible samples
         proposal_logdensity = lax.cond(jnp.isinf(new_state.logdensity), 
                 lambda state, new_state, stepsize: 0.,
                 proposal_logdensity_fn,
@@ -297,8 +302,8 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
 
         # sample the elliptical hit and run distribution
         noise = generate_gaussian_noise(key_direction, position) 
-        noise = noise / jnp.linalg.norm(noise) # magnitude ||u||_2 = 1
-        direction = sqrt_solve(metric, noise) # magnitude v=||Lu||_2
+        noise = noise / jnp.linalg.norm(noise) # noise uniformly distributed on hypersphere
+        direction = sqrt_solve(metric, noise) # v = L.T u with LL.T = H^{-1}
 
         a, b = compute_intersections(position + drift_clip * drift, step_size * direction)
         step = trunc_sample(key_step, a, b, )
@@ -341,7 +346,7 @@ def as_top_level_api(
     min_det=1e1, 
     max_det=1e2,
 ) -> SamplingAlgorithm:
-    #print(f"Using new impl with {metric_backend}.")
+    print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
