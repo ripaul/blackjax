@@ -126,19 +126,19 @@ def dikin_proposal(A, b):
 
     def propose(key, x, L, step_size):
         z = generate_gaussian_noise(key, x)
-        diff = jsc.linalg.solve_triangular(step_size*L.T, z)
-        y = x + diff
+        diff = jsc.linalg.solve_triangular(L.T, z)
+        y = x + diff * step_size
         new_L = jnp.linalg.cholesky(dikin(y))
         return y, new_L
     
     def density(new_state, state, step_size):
-        L = step_size * state.dikin_chol
+        L = state.dikin_chol
 
         x, y = state.position, new_state.position
         
         d = y.shape[0]
         diff = y - x
-        z = L.T @ diff
+        z = L.T @ diff / step_size
         exponent = -0.5 * jnp.dot(z, z)
 
         log_det = jnp.sum(jnp.log(jnp.diag(L)))  # log(det L)
