@@ -91,6 +91,11 @@ class CholeskyMetric(NamedTuple):
     metric: ArrayTree
     L: ArrayTree
 
+class EigMetric(NamedTuple):
+    metric: ArrayTree
+    D: ArrayTree
+    Q: ArrayTree
+
 class SVDMetric(NamedTuple):
     metric: ArrayTree
     U: ArrayTree
@@ -102,7 +107,7 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            L = lax.select(jnp.isnan(L).any(), jnp.identity(M.shape[0]), L)
+            L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.abs(jnp.diag(jnp.diag(M)))), L)
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
@@ -121,6 +126,28 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
             return jnp.exp(logdet(metric))
 
         Metric = CholeskyMetric
+
+    elif metric_backend == 'eig':
+        def build_metric(M):
+            D, Q = jnp.linalg.eigh(M)
+            return Metric(M, D, Q)
+
+        def sqrt_multiply(metric, x):
+            return jnp.sqrt(metric.D) * (metric.Q.T @ x)
+
+        def solve(metric, x):
+            return metric.Q @ ((1.0 / metric.D) * (metric.Q.T @ x))
+
+        def sqrt_solve(metric, x):
+            return (1.0 / jnp.sqrt(metric.D)) * (metric.Q.T @ x)
+
+        def logdet(metric):
+            return 2*jnp.sum(jnp.log(jnp.diag(metric.L)))
+
+        def det(metric):
+            return jnp.exp(logdet(metric))
+
+        Metric = EigMetric
 
     elif metric_backend == 'svd':
         def build_metric(M):
