@@ -101,13 +101,13 @@ class SVDMetric(NamedTuple):
     U: ArrayTree
     S: ArrayTree
 
-def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
+def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_scale=1.):
 #def setup_metric(metric_backend, max_cond=jnp.inf, min_det=0, max_det=jnp.inf):
     #jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.abs(jnp.diag(jnp.diag(M)))), L)
+            L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
@@ -218,9 +218,9 @@ def init(
     b, 
     step_size: float, 
     grad_step_size: float, 
-    metric_backend: str, max_cond, min_det, max_det,
+    metric_backend: str, max_cond, min_det, max_det, diag_scale,
 ) -> EHRState:
-    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det, diag_scale)
     logdensity = logdensity_fn(position)
     drift = vector_field_fn(position)
     metric = build_metric(mass_matrix_fn(position))
@@ -231,10 +231,12 @@ def init(
     _s = .5*grad_step_size**2
     drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
+    #jax.debug.print('H(x={x})={H}', x=position, H=metric)
+
     return EHRState(position, logdensity, drift_clip, drift, metric)
 
 
-def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
+def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, diag_scale):
     """Build a EHR kernel.
 
     Returns
@@ -244,7 +246,7 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det):
     information about the transition.
 
     """
-    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
+    Metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det, diag_scale)
 
     dim = A.shape[-1]
 
@@ -372,6 +374,7 @@ def as_top_level_api(
     max_cond=1e2, 
     min_det=1e1, 
     max_det=1e2,
+    diag_scale=1,
 ) -> SamplingAlgorithm:
     print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
@@ -425,11 +428,11 @@ def as_top_level_api(
 
     grad_step_size = step_size if grad_step_size is None else grad_step_size
 
-    kernel = build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det)
+    kernel = build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, diag_scale)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, metric_backend, max_cond, min_det, max_det)
+        return init(position, logdensity_fn, vector_field_fn, mass_matrix_fn, A, b, step_size, grad_step_size, metric_backend, max_cond, min_det, max_det, diag_scale, )
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(rng_key, state, logdensity_fn, vector_field_fn, mass_matrix_fn, step_size, grad_step_size)
