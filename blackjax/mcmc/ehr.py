@@ -107,7 +107,7 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_sc
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
+            #L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
