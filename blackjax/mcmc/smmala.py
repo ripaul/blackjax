@@ -29,6 +29,7 @@ __all__ = ["SMMALAState", "SMMALAInfo", "init", "build_kernel", "as_top_level_ap
 class CholeskyMetric(NamedTuple):
     metric: ArrayTree
     L: ArrayTree
+    diagonal_fix: bool
 
 class SVDMetric(NamedTuple):
     metric: ArrayTree
@@ -41,7 +42,9 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            return Metric(M, L)
+            diagonal_fix = jnp.isnan(L).any()
+            L = lax.select(diagonal_fix, jnp.sqrt(jnp.diag(jnp.diag(M))), L)
+            return Metric(M, L, diagonal_fix)
 
         def sqrt_multiply(metric, x):
             return metric.L.T @ x

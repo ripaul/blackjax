@@ -90,6 +90,7 @@ def compute_constraint_intersections(A, b, x, u, eps=1e-8):
 class CholeskyMetric(NamedTuple):
     metric: ArrayTree
     L: ArrayTree
+    diagonal_fix: bool
 
 class EigMetric(NamedTuple):
     metric: ArrayTree
@@ -107,8 +108,9 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_sc
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            #L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
-            return Metric(M, L)
+            diagonal_fix = jnp.isnan(L).any()
+            L = lax.select(diagonal_fix, jnp.sqrt(jnp.diag(jnp.diag(M))), L)
+            return Metric(M, L, diagonal_fix)
 
         def sqrt_multiply(metric, x):
             return metric.L.T @ x
