@@ -107,7 +107,7 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_sc
     if metric_backend == 'chol':
         def build_metric(M):
             L = jnp.linalg.cholesky(M)
-            L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
+            #L = lax.select(jnp.isnan(L).any(), jnp.sqrt(jnp.diag(jnp.diag(M))), L)
             return Metric(M, L)
 
         def sqrt_multiply(metric, x):
@@ -271,28 +271,34 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
             
             return y
         
-        def pdf(x, a, b, step_size=1.):
+        def logpdf(x, a, b, step_size=1.):
             def _in():
                 pa = dist.cdf(a)
                 pb = dist.cdf(b)
-                return dist.pdf(x) / (pb - pa)
+                logp = dist.logpdf(x)
+                #jax.debug.print('F(a={a})={pa}, F(b={b})={pb}, p(x={x})={p}', a=a, b=b, pa=pa, pb=pb, x=x, p=logp)
+                return logp - jnp.log(pb - pa)
 
-            p = lax.cond(x > b, lambda : 0., lambda : lax.cond(a > x, lambda : 0., _in), )
-            return p
+            logp = lax.cond(x > b, lambda : -jnp.inf, lambda : lax.cond(a > x, lambda : -jnp.inf, _in), )
+            return logp
 
-        return sample, pdf
+        return sample, logpdf
 
-    trunc_sample, trunc_pdf = truncate(step_dist)
+    trunc_sample, trunc_logpdf = truncate(step_dist)
 
     def proposal_logdensity_fn(state, new_state, step_size):
         delta = (new_state.position - state.position - state.drift_clip*state.drift) # Delta = y - x - g
         step = jnp.linalg.norm(sqrt_multiply(state.metric, delta / step_size)) # gamma = || L^-T Delta ||
         direction = delta / step / step_size # v = Delta / gamma
 
+        #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
+
         a, b = compute_intersections(state.position + state.drift_clip * state.drift, step_size * direction)
 
-        trunc_p = trunc_pdf(step, a, b, )
-        proposal_logdensity = jnp.log(trunc_p) + .5*logdet(state.metric) - (dim - 1)*jnp.log(step) 
+        trunc_logp = trunc_logpdf(step, a, b, )
+        #jax.debug.print('log_trunc_p={log_trunc_p}, logdet M={logdetM}, log step={logstep}', 
+        #log_trunc_p=trunc_logp, logdetM=.5*logdet(state.metric), logstep=(dim-1)*jnp.log(step))
+        proposal_logdensity = trunc_logp + .5*logdet(state.metric) - (dim - 1)*jnp.log(step) 
 
         return proposal_logdensity
         
@@ -305,6 +311,7 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
                 proposal_logdensity_fn,
                 state, new_state, step_size
             )
+        #jax.debug.print('logp={logp}, logq={logq}', logp=new_state.logdensity, logq=proposal_logdensity)
         return -new_state.logdensity + proposal_logdensity
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
