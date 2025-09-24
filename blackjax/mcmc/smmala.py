@@ -160,6 +160,7 @@ class SMMALAInfo(NamedTuple):
 
     acceptance_rate: float
     is_accepted: bool
+    proposal_metric: NamedTuple
 
 
 def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
@@ -232,7 +233,7 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
         accepted_state, info = sample_proposal(key_rmh, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = SMMALAInfo(p_accept, do_accept)
+        info = SMMALAInfo(p_accept, do_accept, new_state.metric)
 
         return accepted_state, info
 
