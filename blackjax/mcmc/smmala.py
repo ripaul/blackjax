@@ -16,6 +16,7 @@ import operator
 from typing import Callable, NamedTuple
 
 import jax
+import jax.lax as lax
 import jax.numpy as jnp
 
 import blackjax.mcmc.diffusions as diffusions
@@ -209,7 +210,6 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
         )
 
         log_det_H = logdet(new_state.metric)
-
         return -new_state.logdensity + (0.25 / step_size) * theta_dot - 0.5 * log_det_H
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(
@@ -244,7 +244,7 @@ def as_top_level_api(
     logdensity_fn: Callable,
     metric_fn: Callable,
     step_size: float,
-    metric_backend: str = 'svd', 
+    metric_backend: str = 'chol', 
     max_cond=1e2,
     min_det=1e1,
     max_det=1e2,
