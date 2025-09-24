@@ -16,6 +16,7 @@ import operator
 from typing import Callable, NamedTuple
 
 import jax
+import jax.lax as lax
 import jax.numpy as jnp
 
 import blackjax.mcmc.diffusions as diffusions
@@ -23,7 +24,7 @@ import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey
 
-__all__ = ["SMMALAState", "SMMALAInfo", "init", "build_kernel", "as_top_level_api"]
+#__all__ = ["SMMALAState", "SMMALAInfo", "init", "build_kernel", "as_top_level_api"]
 
 
 class CholeskyMetric(NamedTuple):
@@ -160,6 +161,9 @@ class SMMALAInfo(NamedTuple):
 
     acceptance_rate: float
     is_accepted: bool
+    proposal_position: ArrayTree
+    proposal_drift: ArrayTree
+    proposal_metric: NamedTuple
 
 
 def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
@@ -168,6 +172,8 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, 
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
     metric = metric_fn(position)
+
+    #jax.debug.print('metric={metric}', metric=metric)
 
     grad = solve(metric, grad) # natural gradient
 
@@ -208,6 +214,24 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
         )
 
         log_det_H = logdet(new_state.metric)
+        #theta = jax.tree_util.tree_map(
+        #    lambda y, x, gx: y - x - step_size * gx,
+        #    new_state.position,
+        #    state.position,
+        #    state.logdensity_grad,
+        #)
+
+        #theta_scaled = sqrt_multiply(
+        #    state.metric,
+        #    theta,
+        #)
+
+        #theta_dot = jax.tree_util.tree_reduce(
+        #    operator.add,
+        #    jax.tree_util.tree_map(lambda t: jnp.sum(t * t), theta_scaled)
+        #)
+
+        #log_det_H = logdet(state.metric)
 
         return -new_state.logdensity + (0.25 / step_size) * theta_dot - 0.5 * log_det_H
 
@@ -228,11 +252,15 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
         new_state = integrator(key_integrator, state, step_size)
         new_state = SMMALAState(*new_state)
 
+        #jax.debug.print('new_state.metric={metric}', metric=new_state.metric)
+
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
+        #jax.debug.print('log_p_accept={alpha}', alpha=log_p_accept)
         accepted_state, info = sample_proposal(key_rmh, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = SMMALAInfo(p_accept, do_accept)
+        info = SMMALAInfo(p_accept, do_accept, new_state.position, new_state.logdensity_grad, new_state.metric)
+        #jax.debug.print('info={info}', info=info)
 
         return accepted_state, info
 
@@ -243,7 +271,7 @@ def as_top_level_api(
     logdensity_fn: Callable,
     metric_fn: Callable,
     step_size: float,
-    metric_backend: str = 'svd', 
+    metric_backend: str = 'chol', 
     max_cond=1e2,
     min_det=1e1,
     max_det=1e2,

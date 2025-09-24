@@ -57,6 +57,7 @@ def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solv
 
     def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
         position, _, grad, metric = state
+
         noise = generate_gaussian_noise(rng_key, position)
 
         noise = sqrt_solve(metric, noise)

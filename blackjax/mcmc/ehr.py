@@ -379,7 +379,7 @@ def as_top_level_api(
     step_dist,
     step_size,
     grad_step_size = None,
-    metric_backend: str = 'svd',
+    metric_backend: str = 'chol',
     max_cond=1e2, 
     min_det=1e1, 
     max_det=1e2,
