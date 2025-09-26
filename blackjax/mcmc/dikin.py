@@ -177,7 +177,7 @@ def build_kernel(
     """
 
     def transition_energy(prev_state, new_state, step_size):
-        return -new_state.logdensity - proposal_logdensity_fn(new_state, prev_state, step_size=step_size)
+        return -new_state.logdensity + proposal_logdensity_fn(new_state, prev_state, step_size=step_size)
 
     def kernel(
         rng_key: PRNGKey,

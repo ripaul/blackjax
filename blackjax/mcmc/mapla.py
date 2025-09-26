@@ -30,7 +30,7 @@ def as_top_level_api(
     A: Array,
     b: Array,
     step_size: float,
-    metric_backend: str = 'svd',
+    metric_backend: str = 'chol',
     max_cond=1e2, 
     min_det=1e1, 
     max_det=1e2,
