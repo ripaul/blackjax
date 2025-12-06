@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Solvers for Langevin diffusions."""
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-from blackjax.types import ArrayTree
+from blackjax.types import Array, ArrayTree
 from blackjax.util import generate_gaussian_noise
+from blackjax.mcmc.metrics import _scale, _dscale
 
 __all__ = ["overdamped_langevin", "overdamped_manifold_langevin"]
 
@@ -46,13 +47,25 @@ def overdamped_langevin(logdensity_grad_fn):
 
     return one_step
 
+
+sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
+sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+multiply = lambda metric, x: _dscale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
+solve = lambda metric, x: _dscale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
+
+class DiffusionMetric(NamedTuple):
+    mass_matrix_sqrt: Array
+    inv_mass_matrix_sqrt: Array
+
 class ManifoldDiffusionState(NamedTuple):
     position: ArrayTree
     logdensity: float
     logdensity_grad: ArrayTree
-    metric: NamedTuple
+    metric: DiffusionMetric
 
-def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solve):
+#def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solve):
+def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn):
     """Euler solver for overdamped Langevin diffusion."""
 
     def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
@@ -69,6 +82,7 @@ def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solv
         )
 
         logdensity, grad = logdensity_grad_fn(position, *batch)
+
         metric = metric_fn(position)
         grad = solve(metric, grad) # natural gradient
 

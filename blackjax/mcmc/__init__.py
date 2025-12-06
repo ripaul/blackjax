@@ -16,6 +16,7 @@ from . import (
     random_walk,
     rmhmc,
     smmala,
+    _smmala,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "adjusted_mclmc_dynamic",
     "adjusted_mclmc",
     "smmala",
+    "_smmala",
 ]
