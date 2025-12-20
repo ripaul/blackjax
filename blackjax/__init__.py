@@ -19,15 +19,19 @@ from .mcmc import dynamic_hmc as _dynamic_hmc
 from .mcmc import elliptical_slice as _elliptical_slice
 from .mcmc import ghmc as _ghmc
 from .mcmc import dikin as _dikin
+from .mcmc import _dikin as __dikin # dev
 from .mcmc import ehr as _ehr
+from .mcmc import _ehr as __ehr
 from .mcmc import hmc as _hmc
 from .mcmc import mala as _mala
 from .mcmc import mapla as _mapla
-from .mcmc import _smmala as __smmala # dev
+from .mcmc import _mapla as __mapla # dev
 from .mcmc import smmala as _smmala
+from .mcmc import _smmala as __smmala # dev
 from .mcmc import marginal_latent_gaussian
 from .mcmc import mclmc as _mclmc
 from .mcmc import nuts as _nuts
+from .mcmc import posdep_rwmh as _posdep_rwmh # dev
 from .mcmc import periodic_orbital, random_walk
 from .mcmc import rmhmc as _rmhmc
 from .mcmc.random_walk import additive_step_random_walk as _additive_step_random_walk
@@ -36,6 +40,7 @@ from .mcmc.random_walk import (
     normal_random_walk,
     rmh_as_top_level_api,
 )
+from .mcmc import vaidya as _vaidya # dev
 from .optimizers import dual_averaging, lbfgs
 from .sgmcmc import csgld as _csgld
 from .sgmcmc import sghmc as _sghmc
