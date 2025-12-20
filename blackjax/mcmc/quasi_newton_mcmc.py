@@ -93,12 +93,80 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init_fn
     return update_state(QNMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
 
 def lbfgs(state):
-    idx = jnp.argsort(logdensity_grads)
+def lbfgs(state):
+    """
+    Build L-BFGS matrices (S, C) as in your screenshot,
+    using all (s_i, y_i) pairs with positive curvature,
+    sorted by logdensity.
+    """
 
-    
+    positions = state.positions         # (m, d)
+    grads = state.logdensity_grads      # (m, d)
+    logdens = state.logdensities        # (m,)
 
-    return lambda position: cov_sqrt, inv_cov_sqrt 
-    
+    # Compute s_i = x_{i+1} - x_i   and   y_i = g_{i+1} - g_i
+    s_all = positions[1:] - positions[:-1]
+    y_all = grads[1:] - grads[:-1]
+    logdens = logdens[1:]              # logdensity associated with s_i,y_i
+
+    # Curvature check: keep only s_i^T y_i > 0
+    sy = jnp.einsum("ij,ij->i", s_all, y_all)
+    mask = sy > 0
+    s_all = s_all[mask]
+    y_all = y_all[mask]
+    logdens = logdens[mask]
+
+    # Sort by descending logdensity
+    idx = jnp.argsort(-logdens)
+    s_all = s_all[idx]
+    y_all = y_all[idx]
+
+    d = positions.shape[1]
+    I = jnp.eye(d)
+
+    # Initial matrices
+    S0 = I
+    C0 = I
+    B0 = I    # B_0 = I (can be changed)
+
+    # One L-BFGS update step
+    def lbfgs_step(carry, sy_pair):
+        S, C, B = carry
+        s, y = sy_pair   # each shape (d,)
+
+        s = s[:, None]   # (d,1)
+        y = y[:, None]   # (d,1)
+
+        sTy   = (s.T @ y)[0, 0]
+        Bs    = B @ s
+        sTBs  = (s.T @ Bs)[0, 0]
+
+        # Formulas from the screenshot
+        p = s / sTy
+        q = jnp.sqrt(sTy / sTBs) * (Bs - y)
+
+        t = s / sTBs
+        u = jnp.sqrt(sTBs / sTy) * y + Bs
+
+        # Update S_{k+1} and C_{k+1}
+        S_new = (I - p @ q.T) @ S
+        C_new = (I - u @ t.T) @ C
+
+        B_new = C_new @ C_new.T
+
+        return (S_new, C_new, B_new), None
+
+    # Run scan over all pairs
+    (Sf, Cf, _), _ = lax.scan(
+        lbfgs_step,
+        (S0, C0, B0),
+        (s_all, y_all),
+    )
+
+    cov_sqrt = Sf
+    inv_cov_sqrt = Cf
+
+    return lambda position: (cov_sqrt, inv_cov_sqrt)
 
 def build_kernel(inner_kernel):
     """Build a QNMCMC kernel.
