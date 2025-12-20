@@ -19,7 +19,7 @@ import jax.numpy as jnp
 
 from blackjax.types import Array, ArrayTree
 from blackjax.util import generate_gaussian_noise
-from blackjax.mcmc.metrics import _scale, _dscale
+from blackjax.mcmc.metrics import _scale, _sq_scale
 
 __all__ = ["overdamped_langevin", "overdamped_manifold_langevin"]
 
@@ -50,8 +50,8 @@ def overdamped_langevin(logdensity_grad_fn):
 
 sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
 sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
-multiply = lambda metric, x: _dscale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
-solve = lambda metric, x: _dscale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
+solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
 logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
 
 class DiffusionMetric(NamedTuple):

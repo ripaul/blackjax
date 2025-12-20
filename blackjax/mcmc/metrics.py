@@ -345,7 +345,7 @@ def _scale(
 
 
 # scale twice, which means multiplying or solving by M
-def _dscale(
+def _sq_scale(
     mass_matrix_sqrt: Array,
     inv_mass_matrix_sqrt: Array,
     element: ArrayLikeTree,

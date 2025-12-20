@@ -22,12 +22,12 @@ from jax.flatten_util import ravel_pytree
 
 import blackjax.mcmc.diffusions as diffusions
 from blackjax.mcmc.diffusions import sqrt_multiply, sqrt_solve, multiply, solve, logdet, DiffusionMetric
+from blackjax.mcmc.metrics import _format_covariance
+
 import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey
 
-from blackjax.util import linear_map
-from blackjax.mcmc.metrics import _format_covariance
 
 __all__ = ["_SMMALAState", "_SMMALAInfo", "init", "build_kernel", "as_top_level_api"]
 
