@@ -183,9 +183,9 @@ def build_kernel(inner_kernel):
             rng_key: PRNGKey, state: QNMCMCState, logdensity_fn: Callable, step_size: float
     ) -> tuple[QNMCMCState, QNMCMCInfo]:
         """Generate a new sample with the QNMCMC kernel."""
-        metric_fn = lbfgs(state)
+        mass_matrix_fn = lbfgs(state)
 
-        new_inner_state, info = inner_kernel(rng_key, state.inner_state, logdensity_fn, metric_fn, step_size)
+        new_inner_state, info = inner_kernel(rng_key, state.inner_state, logdensity_fn, mass_matrix_fn, step_size)
 
         accepted_state = update_state(state, new_inner_state)
 
@@ -196,7 +196,7 @@ def build_kernel(inner_kernel):
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    metric_fn: Callable,
+    mass_matrix_fn: Callable,
     step_size: float,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
@@ -252,10 +252,10 @@ def as_top_level_api(
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, metric_fn)
+        return init(position, logdensity_fn, mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, metric_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, mass_matrix_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 

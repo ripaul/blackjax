@@ -63,12 +63,12 @@ class _SMMALAInfo(NamedTuple):
     acceptance_rate: float
     is_accepted: bool
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable) -> _SMMALAState:
+def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Callable) -> _SMMALAState:
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
-    metric = metric_fn(position)
+    metric = mass_matrix_fn(position)
 
-    # metric_fn yields e.g. the hessian H, which is the inverse of the covariance C of the preconditioned mala proposal.
+    # mass_matrix_fn yields e.g. the hessian H, which is the inverse of the covariance C of the preconditioned mala proposal.
     # the inverse of the preconditioned mala proposal's covariance C in turn is the momentum covariance in a leapfrog-like
     # proposal mechanism, also often referred to as mass matrix M. so M = H = C^{-1}
     grad = solve(metric, grad) # natural gradient
@@ -116,11 +116,11 @@ def build_kernel():
     sample_proposal = proposal.static_binomial_sampling
 
     def kernel(
-            rng_key: PRNGKey, state: _SMMALAState, logdensity_fn: Callable, metric_fn: Callable, step_size: float
+            rng_key: PRNGKey, state: _SMMALAState, logdensity_fn: Callable, mass_matrix_fn: Callable, step_size: float
     ) -> tuple[_SMMALAState, _SMMALAInfo]:
         """Generate a new sample with the MALA kernel."""
         grad_fn = jax.value_and_grad(logdensity_fn)
-        integrator = diffusions.overdamped_manifold_langevin(grad_fn, metric_fn, )
+        integrator = diffusions.overdamped_manifold_langevin(grad_fn, mass_matrix_fn, )
 
         key_integrator, key_rmh = jax.random.split(rng_key)
 
@@ -140,7 +140,7 @@ def build_kernel():
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    metric_fn: Callable,
+    mass_matrix_fn: Callable,
     step_size: float,
     format_covariance: bool = True,
 ) -> SamplingAlgorithm:
@@ -196,16 +196,16 @@ def as_top_level_api(
     kernel = build_kernel()
 
     if format_covariance:
-        _metric_fn = lambda position: DiffusionMetric(*_format_covariance(metric_fn(position), is_inv=False)[:2])
+        _mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(mass_matrix_fn(position), is_inv=False)[:2])
     else:
-        _metric_fn = metric_fn
+        _mass_matrix_fn = mass_matrix_fn
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _metric_fn)
+        return init(position, logdensity_fn, _mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, _metric_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 

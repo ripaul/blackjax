@@ -121,9 +121,9 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
     else:
         raise ValueError(f"Unknown backend {metric_type}, has to be 'svd', 'chol' or 'auto'.")
 
-    def generate_build_metric(metric_fn):
+    def generate_build_metric(mass_matrix_fn):
         def _build(x):
-            return build_metric(metric_fn(x))
+            return build_metric(mass_matrix_fn(x))
         return _build
 
     return Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det
@@ -164,12 +164,12 @@ class SMMALAInfo(NamedTuple):
     proposal_metric: NamedTuple
 
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
+def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
     Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
-    metric = metric_fn(position)
+    metric = mass_matrix_fn(position)
 
     grad = solve(metric, grad) # natural gradient
 
@@ -218,11 +218,11 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
     sample_proposal = proposal.static_binomial_sampling
 
     def kernel(
-            rng_key: PRNGKey, state: SMMALAState, logdensity_fn: Callable, metric_fn: Callable, step_size: float
+            rng_key: PRNGKey, state: SMMALAState, logdensity_fn: Callable, mass_matrix_fn: Callable, step_size: float
     ) -> tuple[SMMALAState, SMMALAInfo]:
         """Generate a new sample with the MALA kernel."""
         grad_fn = jax.value_and_grad(logdensity_fn)
-        integrator = diffusions.overdamped_manifold_langevin(grad_fn, metric_fn, sqrt_solve, solve)
+        integrator = diffusions.overdamped_manifold_langevin(grad_fn, mass_matrix_fn, sqrt_solve, solve)
 
         key_integrator, key_rmh = jax.random.split(rng_key)
 
@@ -242,7 +242,7 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    metric_fn: Callable,
+    mass_matrix_fn: Callable,
     step_size: float,
     metric_backend: str = 'chol', 
     max_cond=1e2,
@@ -301,14 +301,14 @@ def as_top_level_api(
     Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     kernel = build_kernel(metric_backend, max_cond, min_det, max_det)
-    _metric_fn = generate_build_metric(metric_fn)
+    _mass_matrix_fn = generate_build_metric(mass_matrix_fn)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _metric_fn, metric_backend, max_cond, min_det, max_det)
+        return init(position, logdensity_fn, _mass_matrix_fn, metric_backend, max_cond, min_det, max_det)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, _metric_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 

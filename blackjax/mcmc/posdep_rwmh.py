@@ -116,7 +116,7 @@ class PosDepRWMHState(NamedTuple):
     acceptance_rate: float
     is_accepted: bool
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable) -> PosDepRWMHState:
+def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Callable) -> PosDepRWMHState:
     """Create a chain state from a position.
 
     Parameters
@@ -128,7 +128,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, metric_fn: Callable) 
         from.
 
     """
-    return PosDepRWMHState(position, logdensity_fn(position), metric_fn(position))
+    return PosDepRWMHState(position, logdensity_fn(position), mass_matrix_fn(position))
 
 def build_kernel():
     """Build a Rosenbluth-Metropolis-Hastings kernel with position-dependent covariance.
@@ -170,7 +170,7 @@ def build_kernel():
     sample_proposal = proposal.static_binomial_sampling
 
     def kernel(
-            rng_key: PRNGKey, state: PosDepRWMHState, logdensity_fn: Callable, metric_fn: Callable, step_size: float
+            rng_key: PRNGKey, state: PosDepRWMHState, logdensity_fn: Callable, mass_matrix_fn: Callable, step_size: float
     ) -> tuple[PosDepRWMHState, PosDepRWMHInfo]:
         """"""
 
@@ -187,7 +187,7 @@ def build_kernel():
         )
 
         logdensity = logdensity_fn(position, *batch)
-        metric = metric_fn(position)
+        metric = mass_matrix_fn(position)
 
         new_state = PosDepRWMHState(position, logdensity, metric)
 
@@ -204,7 +204,7 @@ def build_kernel():
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    metric_fn: Callable, 
+    mass_matrix_fn: Callable, 
     step_size
 ) -> SamplingAlgorithm:
     """"""
@@ -213,14 +213,14 @@ def as_top_level_api(
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, metric_fn)
+        return init(position, logdensity_fn, mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(
             rng_key,
             state,
             logdensity_fn,
-            metric_fn,
+            mass_matrix_fn,
             step_size,
         )
 

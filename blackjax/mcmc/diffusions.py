@@ -64,8 +64,8 @@ class ManifoldDiffusionState(NamedTuple):
     logdensity_grad: ArrayTree
     metric: DiffusionMetric
 
-#def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn, sqrt_solve, solve):
-def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn):
+#def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn, sqrt_solve, solve):
+def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
     """Euler solver for overdamped Langevin diffusion."""
 
     def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
@@ -83,7 +83,7 @@ def overdamped_manifold_langevin(logdensity_grad_fn, metric_fn):
 
         logdensity, grad = logdensity_grad_fn(position, *batch)
 
-        metric = metric_fn(position)
+        metric = mass_matrix_fn(position)
         grad = solve(metric, grad) # natural gradient
 
         return ManifoldDiffusionState(position, logdensity, grad, metric)

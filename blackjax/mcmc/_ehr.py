@@ -93,12 +93,12 @@ def init(
     logdensity_fn: Callable, 
     A, 
     b, 
-    metric_fn: Callable, 
+    mass_matrix_fn: Callable, 
     step_size: float, 
 ) -> EHRState:
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
-    metric = metric_fn(position)
+    metric = mass_matrix_fn(position)
 
     grad = solve(metric, grad) # natural gradient H^{-1}g
 
@@ -194,7 +194,7 @@ def build_kernel(A, b, step_dist):
         rng_key: PRNGKey, 
         state: _EHRState, 
         logdensity_fn: Callable, 
-        metric_fn: Callable, 
+        mass_matrix_fn: Callable, 
         step_size: float,
     ) -> tuple[_EHRState, _EHRInfo]:
         """Generate a new sample with the EHR kernel."""
@@ -214,7 +214,7 @@ def build_kernel(A, b, step_dist):
         new_position = position + clip * grad + step * step_size * direction
 
         new_logdensity, new_grad = grad_fn(new_position)
-        new_metric = metric_fn(new_position)
+        new_metric = mass_matrix_fn(new_position)
         new_grad = solve(new_metric, new_grad) # natural gradient
 
         intersection = compute_intersection(new_position, new_grad)
@@ -237,7 +237,7 @@ def build_kernel(A, b, step_dist):
 def as_top_level_api(
     logdensity_fn: Callable,
     vector_field_fn: Callable,
-    metric_fn: Callable,
+    mass_matrix_fn: Callable,
     A: Array,
     b: Array,
     step_size: float,
@@ -296,16 +296,16 @@ def as_top_level_api(
     kernel = build_kernel(A, b, step_dist)
 
     if format_covariance:
-        _metric_fn = lambda position: DiffusionMetric(*_format_covariance(metric_fn(position), is_inv=False)[:2])
+        _mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(mass_matrix_fn(position), is_inv=False)[:2])
     else:
-        _metric_fn = metric_fn
+        _mass_matrix_fn = mass_matrix_fn
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, vector_field_fn, _metric_fn, A, b, step_size)
+        return init(position, logdensity_fn, vector_field_fn, _mass_matrix_fn, A, b, step_size)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, _metric_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 
