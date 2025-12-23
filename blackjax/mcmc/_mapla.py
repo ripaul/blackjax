@@ -19,43 +19,14 @@ import jax
 import jax.numpy as jnp
 
 from blackjax.mcmc._smmala import init, build_kernel
-from blackjax.mcmc.dikin import dikin_metric
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 
-__all__ = ["as_top_level_api"]
+from blackjax.mcmc._dikin import dikin_metric
+from blackjax.mcmc.diffusions import DiffusionMetric
+from blackjax.mcmc.metrics import _format_covariance
 
-class _MAPLAState(NamedTuple):
-    """State of the MALA algorithm.
-
-    The MALA algorithm takes one position of the chain and returns another
-    position. In order to make computations more efficient, we also store
-    the current log-probability density as well as the current gradient of the
-    log-probability density.
-
-    """
-
-    position: ArrayTree
-    logdensity: float
-    logdensity_grad: ArrayTree
-    metric: DiffusionMetric
-
-class _MAPLAInfo(NamedTuple):
-    """Additional information on the MALA transition.
-
-    This additional information can be used for debugging or computing
-    diagnostics.
-
-    acceptance_rate
-        The acceptance rate of the transition.
-    is_accepted
-        Whether the proposed position was accepted or the original position
-        was returned.
-
-    """
-
-    acceptance_rate: float
-    is_accepted: bool
+__all__ = ["_MAPLAState", "_MAPLAInfo", "as_top_level_api"]
 
 def as_top_level_api(
     logdensity_fn: Callable,
@@ -112,22 +83,21 @@ def as_top_level_api(
 
     """
     dikin = dikin_metric(A, b)
+    mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(dikin(position), is_inv=False)[:2])
     kernel = build_kernel()
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return MAPLAState(*init(position, logdensity_fn, dikin))
+        return init(position, logdensity_fn, mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
-        _state, _info = kernel(
+        return kernel(
             rng_key,
             state,
             logdensity_fn,
-            dikin,
+            mass_matrix_fn,
             step_size,
         )
-        return _MAPLAState(*_state), DikinInfo(*_info)
-
 
     return SamplingAlgorithm(init_fn, step_fn)
 

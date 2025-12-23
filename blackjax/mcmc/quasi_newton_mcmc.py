@@ -24,10 +24,11 @@ import blackjax.mcmc.diffusions as diffusions
 from blackjax.mcmc.diffusions import sqrt_multiply, sqrt_solve, multiply, solve, logdet, DiffusionMetric
 import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
-from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey
+from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey, Array
 
-from blackjax.util import linear_map
 from blackjax.mcmc.metrics import _format_covariance
+
+__all__ = ["QNMCMCState", "QNMCMCInfo", "init", "build_kernel", "as_top_level_api"]
 
 class QNMCMCState(NamedTuple):
     """State of the quasi-newton MCMC algorithm.
@@ -79,11 +80,11 @@ def update_state(state, new_inner_state):
         logdensity_grads=updated_logdensity_grads,
     )
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init_fn: Callable) -> QNMCMCState:
-    inner_state = inner_init_fn(position, logdensity_fn)
-
+def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: Callable) -> QNMCMCState:
     # Infer dimensionality d
     d = position.shape[-1]
+
+    inner_state = inner_init(position, logdensity_fn, mass_matrix_fn=lambda _: DiffusionMetric(jnp.eye(d), jnp.eye(d)))
 
     # --- Step 2: allocate the sliding buffers (m, d) etc. ---
     positions = jnp.zeros((m, d))               # (m, d)
@@ -93,80 +94,72 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init_fn
     return update_state(QNMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
 
 def lbfgs(state):
-def lbfgs(state):
     """
-    Build L-BFGS matrices (S, C) as in your screenshot,
-    using all (s_i, y_i) pairs with positive curvature,
-    sorted by logdensity.
+    L-BFGS metric builder compatible with jit / vmap / scan.
     """
 
-    positions = state.positions         # (m, d)
-    grads = state.logdensity_grads      # (m, d)
-    logdens = state.logdensities        # (m,)
+    positions = state.positions[:-1]           # (m, d)
+    grads = state.logdensity_grads[:-1]        # (m, d)
+    logdens = state.logdensities[:-1]          # (m,)
 
-    # Compute s_i = x_{i+1} - x_i   and   y_i = g_{i+1} - g_i
-    s_all = positions[1:] - positions[:-1]
-    y_all = grads[1:] - grads[:-1]
-    logdens = logdens[1:]              # logdensity associated with s_i,y_i
+    # s_i = x_{i+1} - x_i, y_i = g_{i+1} - g_i
+    s_all = positions[1:] - positions[:-1]      # (m-1, d)
+    y_all = grads[1:] - grads[:-1]               # (m-1, d)
+    logdens = logdens[1:]                         # (m-1,)
 
-    # Curvature check: keep only s_i^T y_i > 0
-    sy = jnp.einsum("ij,ij->i", s_all, y_all)
-    mask = sy > 0
-    s_all = s_all[mask]
-    y_all = y_all[mask]
-    logdens = logdens[mask]
+    # curvature scalars (static shape)
+    sTy = jnp.einsum("ij,ij->i", s_all, y_all)   # (m-1,)
+    valid = (sTy > 0).astype(s_all.dtype)        # {0,1} mask
 
-    # Sort by descending logdensity
+    # sort by descending logdensity (static permutation)
     idx = jnp.argsort(-logdens)
     s_all = s_all[idx]
     y_all = y_all[idx]
+    sTy = sTy[idx]
+    valid = valid[idx]
 
     d = positions.shape[1]
     I = jnp.eye(d)
 
-    # Initial matrices
+    # initial matrices
     S0 = I
     C0 = I
-    B0 = I    # B_0 = I (can be changed)
+    B0 = I
 
-    # One L-BFGS update step
-    def lbfgs_step(carry, sy_pair):
+    def lbfgs_step(carry, data):
         S, C, B = carry
-        s, y = sy_pair   # each shape (d,)
+        s, y, sTy, alpha = data
 
-        s = s[:, None]   # (d,1)
-        y = y[:, None]   # (d,1)
+        s = s[:, None]
+        y = y[:, None]
 
-        sTy   = (s.T @ y)[0, 0]
-        Bs    = B @ s
-        sTBs  = (s.T @ Bs)[0, 0]
+        Bs = B @ s
+        sTBs = (s.T @ Bs)[0, 0]
 
-        # Formulas from the screenshot
-        p = s / sTy
-        q = jnp.sqrt(sTy / sTBs) * (Bs - y)
+        # safe scalars (avoid NaNs when alpha = 0)
+        sTy_safe = jnp.where(alpha > 0, sTy, 1.0)
+        sTBs_safe = jnp.where(alpha > 0, sTBs, 1.0)
 
-        t = s / sTBs
-        u = jnp.sqrt(sTBs / sTy) * y + Bs
+        p = s / sTy_safe
+        q = jnp.sqrt(sTy_safe / sTBs_safe) * (Bs - y)
 
-        # Update S_{k+1} and C_{k+1}
-        S_new = (I - p @ q.T) @ S
-        C_new = (I - u @ t.T) @ C
+        t = s / sTBs_safe
+        u = jnp.sqrt(sTBs_safe / sTy_safe) * y + Bs
 
+        # gated rank-1 updates
+        S_new = (I - alpha * (p @ q.T)) @ S
+        C_new = (I - alpha * (u @ t.T)) @ C
         B_new = C_new @ C_new.T
 
         return (S_new, C_new, B_new), None
 
-    # Run scan over all pairs
     (Sf, Cf, _), _ = lax.scan(
         lbfgs_step,
         (S0, C0, B0),
-        (s_all, y_all),
+        (s_all, y_all, sTy, valid),
     )
 
-    cov_sqrt = Sf
-    inv_cov_sqrt = Cf
-
-    return lambda position: (cov_sqrt, inv_cov_sqrt)
+    return lambda position: DiffusionMetric(Sf, Cf)
 
 def build_kernel(inner_kernel):
     """Build a QNMCMC kernel.
@@ -185,7 +178,13 @@ def build_kernel(inner_kernel):
         """Generate a new sample with the QNMCMC kernel."""
         mass_matrix_fn = lbfgs(state)
 
-        new_inner_state, info = inner_kernel(rng_key, state.inner_state, logdensity_fn, mass_matrix_fn, step_size)
+        new_inner_state, info = inner_kernel(rng_key=rng_key, 
+                                             state=state.inner_state, 
+                                             logdensity_fn=logdensity_fn, 
+                                             mass_matrix_fn=mass_matrix_fn, 
+                                             step_size=step_size)
+
+        #jax.debug.print('{state}', state=new_inner_state)
 
         accepted_state = update_state(state, new_inner_state)
 
@@ -196,7 +195,9 @@ def build_kernel(inner_kernel):
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    mass_matrix_fn: Callable,
+    inner_init,
+    inner_kernel,
+    m: int,
     step_size: float,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
@@ -248,14 +249,14 @@ def as_top_level_api(
 
     """
 
-    kernel = build_kernel()
+    kernel = build_kernel(inner_kernel)
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, mass_matrix_fn)
+        return init(position, logdensity_fn, m, inner_init)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, mass_matrix_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 

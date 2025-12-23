@@ -33,6 +33,7 @@ from .mcmc import mclmc as _mclmc
 from .mcmc import nuts as _nuts
 from .mcmc import posdep_rwmh as _posdep_rwmh # dev
 from .mcmc import periodic_orbital, random_walk
+from .mcmc import quasi_newton_mcmc as _quasi_newton_mcmc
 from .mcmc import rmhmc as _rmhmc
 from .mcmc.random_walk import additive_step_random_walk as _additive_step_random_walk
 from .mcmc.random_walk import (
@@ -115,6 +116,7 @@ dynamic_hmc = generate_top_level_api_from(_dynamic_hmc)
 rmhmc = generate_top_level_api_from(_rmhmc)
 mala = generate_top_level_api_from(_mala)
 mapla = generate_top_level_api_from(_mapla)
+_mapla = generate_top_level_api_from(__mapla)
 smmala = generate_top_level_api_from(_smmala)
 _smmala = generate_top_level_api_from(__smmala)
 mgrad_gaussian = generate_top_level_api_from(marginal_latent_gaussian)
@@ -127,13 +129,18 @@ additive_step_random_walk = GenerateSamplingAPI(
 additive_step_random_walk.register_factory("normal_random_walk", normal_random_walk)
 
 dikin = generate_top_level_api_from(_dikin)
+_dikin = generate_top_level_api_from(__dikin)
+vaidya = generate_top_level_api_from(_vaidya)
 ehr = generate_top_level_api_from(_ehr)
+_ehr = generate_top_level_api_from(__ehr)
 mclmc = generate_top_level_api_from(_mclmc)
 adjusted_mclmc_dynamic = generate_top_level_api_from(_adjusted_mclmc_dynamic)
 adjusted_mclmc = generate_top_level_api_from(_adjusted_mclmc)
 elliptical_slice = generate_top_level_api_from(_elliptical_slice)
 ghmc = generate_top_level_api_from(_ghmc)
 barker_proposal = generate_top_level_api_from(barker)
+
+quasi_newton_mcmc = generate_top_level_api_from(_quasi_newton_mcmc)
 
 hmc_family = [hmc, nuts]
 

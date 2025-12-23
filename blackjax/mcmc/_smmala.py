@@ -127,6 +127,8 @@ def build_kernel():
         new_state = integrator(key_integrator, state, step_size)
         new_state = _SMMALAState(*new_state)
 
+        #jax.debug.print('proposal: {x}', x=new_state)
+
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_rmh, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info

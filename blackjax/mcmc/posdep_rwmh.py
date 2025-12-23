@@ -60,6 +60,7 @@ Examples
         new_state, info = step(rng_key, state)
 
 """
+import operator
 from typing import Callable, NamedTuple, Optional
 
 import jax
@@ -96,7 +97,7 @@ class PosDepRWMHState(NamedTuple):
     logdensity: float
     metric: DiffusionMetric
 
-class PosDepRWMHState(NamedTuple):
+class PosDepRWMHInfo(NamedTuple):
     """Additional information on the Dikin chain.
 
     This additional information can be used for debugging or computing
@@ -186,7 +187,7 @@ def build_kernel():
             noise,
         )
 
-        logdensity = logdensity_fn(position, *batch)
+        logdensity = logdensity_fn(position)
         metric = mass_matrix_fn(position)
 
         new_state = PosDepRWMHState(position, logdensity, metric)
@@ -211,16 +212,21 @@ def as_top_level_api(
 
     kernel = build_kernel()
 
+    if format_covariance:
+        _mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(mass_matrix_fn(position), is_inv=False)[:2])
+    else:
+        _mass_matrix_fn = mass_matrix_fn
+
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, mass_matrix_fn)
+        return init(position, logdensity_fn, _mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(
             rng_key,
             state,
             logdensity_fn,
-            mass_matrix_fn,
+            _mass_matrix_fn,
             step_size,
         )
 

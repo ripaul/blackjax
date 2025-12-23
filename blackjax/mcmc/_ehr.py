@@ -30,6 +30,8 @@ import blackjax.mcmc.diffusions as diffusions
 from blackjax.mcmc.diffusions import sqrt_multiply, sqrt_solve, multiply, solve, logdet, DiffusionMetric
 from blackjax.mcmc.metrics import _format_covariance
 
+from blackjax.mcmc.step_distributions import normchi
+
 __all__ = [
         "init", 
         "build_kernel", 
@@ -93,11 +95,12 @@ def init(
     logdensity_fn: Callable, 
     A, 
     b, 
+    vector_field_fn: Callable,
     mass_matrix_fn: Callable, 
     step_size: float, 
-) -> EHRState:
-    grad_fn = jax.value_and_grad(logdensity_fn)
-    logdensity, grad = grad_fn(position)
+) -> _EHRState:
+    logdensity = logdensity_fn(position)
+    grad = vector_field_fn(position)
     metric = mass_matrix_fn(position)
 
     grad = solve(metric, grad) # natural gradient H^{-1}g
@@ -194,13 +197,12 @@ def build_kernel(A, b, step_dist):
         rng_key: PRNGKey, 
         state: _EHRState, 
         logdensity_fn: Callable, 
+        vector_field_fn: Callable,
         mass_matrix_fn: Callable, 
         step_size: float,
     ) -> tuple[_EHRState, _EHRInfo]:
         """Generate a new sample with the EHR kernel."""
-        grad_fn = jax.value_and_grad(logdensity_fn)
-
-        position, _, clip, grad, metric = state
+        position, _, grad, metric, clip = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
         # sample the elliptical hit and run distribution
@@ -213,14 +215,15 @@ def build_kernel(A, b, step_dist):
 
         new_position = position + clip * grad + step * step_size * direction
 
-        new_logdensity, new_grad = grad_fn(new_position)
+        new_logdensity = logdensity_fn(new_position)
+        new_grad = vector_field_fn(new_position)
         new_metric = mass_matrix_fn(new_position)
         new_grad = solve(new_metric, new_grad) # natural gradient
 
         intersection = compute_intersection(new_position, new_grad)
         new_clip = lax.select(.5*step_size**2 < .5*intersection, .5*step_size**2, .5*intersection)
 
-        new_state = _EHRState(new_position, new_logdensity, new_clip, new_grad, new_metric)
+        new_state = _EHRState(new_position, new_logdensity, new_grad, new_metric, new_clip)
 
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
@@ -236,15 +239,14 @@ def build_kernel(A, b, step_dist):
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    vector_field_fn: Callable,
-    mass_matrix_fn: Callable,
     A: Array,
     b: Array,
+    vector_field_fn: Callable,
+    mass_matrix_fn: Callable,
     step_size: float,
-    step_dist,
+    step_dist = None,
     format_covariance: bool = True,
 ) -> SamplingAlgorithm:
-    print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
@@ -293,6 +295,9 @@ def as_top_level_api(
     A ``SamplingAlgorithm``.
 
     """
+    if step_dist is None:
+        step_dist = normchi(A.shape[-1])
+
     kernel = build_kernel(A, b, step_dist)
 
     if format_covariance:
@@ -302,10 +307,10 @@ def as_top_level_api(
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, vector_field_fn, _mass_matrix_fn, A, b, step_size)
+        return init(position, logdensity_fn, A, b, vector_field_fn, _mass_matrix_fn, step_size)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, vector_field_fn, _mass_matrix_fn, step_size)
 
     return SamplingAlgorithm(init_fn, step_fn)
 

@@ -26,6 +26,8 @@ from blackjax.base import SamplingAlgorithm
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 from blackjax.util import generate_gaussian_noise
 
+from blackjax.mcmc.step_distributions import normchi
+
 __all__ = ["EHRState", "EHRInfo", "init", "build_kernel", "as_top_level_api"]
 
 class EHRState(NamedTuple):
@@ -372,12 +374,12 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
 
 def as_top_level_api(
     logdensity_fn: Callable,
-    vector_field_fn: Callable,
-    mass_matrix_fn: Callable,
     A: Array,
     b: Array,
-    step_dist,
+    vector_field_fn: Callable,
+    mass_matrix_fn: Callable,
     step_size,
+    step_dist = None,
     grad_step_size = None,
     metric_backend: str = 'chol',
     max_cond=1e2, 
@@ -385,7 +387,6 @@ def as_top_level_api(
     max_det=1e2,
     diag_scale=1,
 ) -> SamplingAlgorithm:
-    print(f"Using new impl with {metric_backend}.")
     """Implements the (basic) user interface for the EHR kernel.
 
     The general mala kernel builder (:meth:`blackjax.mcmc.mala.build_kernel`, alias `blackjax.mala.build_kernel`) can be
@@ -434,7 +435,10 @@ def as_top_level_api(
     A ``SamplingAlgorithm``.
 
     """
+    if step_dist is None:
+        step_dist = normchi(A.shape[-1])
 
+    #vector_field_fn = jax.grad(logdensity_fn)
     grad_step_size = step_size if grad_step_size is None else grad_step_size
 
     kernel = build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, diag_scale)

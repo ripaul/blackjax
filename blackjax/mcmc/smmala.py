@@ -222,7 +222,7 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
     ) -> tuple[SMMALAState, SMMALAInfo]:
         """Generate a new sample with the MALA kernel."""
         grad_fn = jax.value_and_grad(logdensity_fn)
-        integrator = diffusions.overdamped_manifold_langevin(grad_fn, mass_matrix_fn, sqrt_solve, solve)
+        integrator = diffusions._overdamped_manifold_langevin(grad_fn, mass_matrix_fn, sqrt_solve, solve)
 
         key_integrator, key_rmh = jax.random.split(rng_key)
 

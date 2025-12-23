@@ -20,55 +20,19 @@ from jax import numpy as jnp
 from jax import scipy as jsc
 
 from blackjax.base import SamplingAlgorithm
-from blackjax.mcmc.posdep_rwmh import init, build_kernel, setup_metric 
+from blackjax.mcmc.posdep_rwmh import init, build_kernel
 from blackjax.mcmc import proposal
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 from blackjax.util import generate_gaussian_noise
 
 from blackjax.mcmc.diffusions import DiffusionMetric
+from blackjax.mcmc.metrics import _format_covariance
 
 __all__ = [
     "init",
     "build_kernel",
-    "_DikinInfo",
-    "_DikinState",
     "as_top_level_api",
 ]
-
-
-class _DikinState(NamedTuple):
-    """State of the Dikin chain.
-
-    position
-        Current position of the chain.
-    log_density
-        Current value of the log-density
-    metric
-        Local Vaidya metric.
-    """
-
-    position: ArrayTree
-    logdensity: float
-    metric: DiffusionMetric
-
-
-class _DikinInfo(NamedTuple):
-    """Additional information on the Dikin chain.
-
-    This additional information can be used for debugging or computing
-    diagnostics.
-
-    acceptance_rate
-        The acceptance probability of the transition, linked to the energy
-        difference between the original and the proposed states scaled by the local
-        Dikin matric.
-    is_accepted
-        Whether the proposed position was accepted or the original position
-        was returned.
-    """
-
-    acceptance_rate: float
-    is_accepted: bool
 
 def dikin_metric(A, b):
     def dikin(x):
@@ -119,22 +83,21 @@ def as_top_level_api(
     """
 
     dikin = dikin_metric(A, b)
+    mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(dikin(position), is_inv=False)[:2])
     kernel = build_kernel()
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return _DikinState(*init(position, logdensity_fn, dikin))
+        return init(position, logdensity_fn, mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
-        _state, _info = kernel(
+        return kernel(
             rng_key,
             state,
             logdensity_fn,
-            dikin,
+            mass_matrix_fn,
             step_size,
         )
-        return _DikinState(*_state), DikinInfo(*_info)
-
 
     return SamplingAlgorithm(init_fn, step_fn)
 

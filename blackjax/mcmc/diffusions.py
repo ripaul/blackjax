@@ -64,7 +64,6 @@ class ManifoldDiffusionState(NamedTuple):
     logdensity_grad: ArrayTree
     metric: DiffusionMetric
 
-#def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn, sqrt_solve, solve):
 def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
     """Euler solver for overdamped Langevin diffusion."""
 
@@ -72,7 +71,10 @@ def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
         position, _, grad, metric = state
         noise = generate_gaussian_noise(rng_key, position)
 
+        #jax.debug.print("{x}, {g}, {m}", x=position, g=grad, m=metric)
+        #jax.debug.print("{n}", n=noise)
         noise = sqrt_solve(metric, noise)
+        #jax.debug.print("{n}", n=noise)
 
         position = jax.tree_util.tree_map(
             lambda p, g, n: p + step_size * g + jnp.sqrt(2 * step_size) * n,
@@ -80,6 +82,8 @@ def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
             grad,
             noise,
         )
+
+        #jax.debug.print("{x}, {g}, {m}", x=position, g=grad, m=metric)
 
         logdensity, grad = logdensity_grad_fn(position, *batch)
 
@@ -89,3 +93,35 @@ def overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
         return ManifoldDiffusionState(position, logdensity, grad, metric)
 
     return one_step
+
+def _overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn, sqrt_solve, solve):
+#def _overdamped_manifold_langevin(logdensity_grad_fn, mass_matrix_fn):
+    """Euler solver for overdamped Langevin diffusion."""
+
+    def one_step(rng_key, state: DiffusionState, step_size: float, batch: tuple = ()):
+        position, _, grad, metric = state
+        noise = generate_gaussian_noise(rng_key, position)
+
+        #jax.debug.print("{x}, {g}, {m}", x=position, g=grad, m=metric)
+        #jax.debug.print("{n}", n=noise)
+        noise = sqrt_solve(metric, noise)
+        #jax.debug.print("{n}", n=noise)
+
+        position = jax.tree_util.tree_map(
+            lambda p, g, n: p + step_size * g + jnp.sqrt(2 * step_size) * n,
+            position,
+            grad,
+            noise,
+        )
+
+        #jax.debug.print("{x}, {g}, {m}", x=position, g=grad, m=metric)
+
+        logdensity, grad = logdensity_grad_fn(position, *batch)
+
+        metric = mass_matrix_fn(position)
+        grad = solve(metric, grad) # natural gradient
+
+        return ManifoldDiffusionState(position, logdensity, grad, metric)
+
+    return one_step
+
