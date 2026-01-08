@@ -48,8 +48,8 @@ def overdamped_langevin(logdensity_grad_fn):
     return one_step
 
 
-sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
-sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=True)
+sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=True)
 multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
 solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
 logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))

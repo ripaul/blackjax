@@ -119,7 +119,7 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
         Metric = SVDMetric
 
     else:
-        raise ValueError(f"Unknown backend {metric_type}, has to be 'svd', 'chol' or 'auto'.")
+        raise ValueError(f"Unknown backend {metric_backend}, has to be 'svd', 'chol' or 'auto'.")
 
     def generate_build_metric(mass_matrix_fn):
         def _build(x):

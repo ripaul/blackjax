@@ -103,6 +103,7 @@ def init(
     grad = vector_field_fn(position)
     metric = mass_matrix_fn(position)
 
+    #jax.debug.print("metric={m}", m=metric)
     grad = solve(metric, grad) # natural gradient H^{-1}g
 
     intersection = compute_constraint_intersection(A, b, position, grad)
@@ -126,11 +127,12 @@ def build_kernel(A, b, step_dist):
     compute_intersection = lambda x, u : compute_constraint_intersection(A, b, x, u)
 
     def truncate(dist):
+        p_min = dist.cdf(0.)
+
         def sample(key, s_max, n=1):
             #key_uniform, key_bernoulli = jax.random.split(key, 2)
 
             # Step 1: Compute CDF values
-            p_min = dist.cdf(0.)
             p_max = dist.cdf(s_max)
 
             # Step 2: Uniform sample & Bernoulli sample
@@ -139,7 +141,7 @@ def build_kernel(A, b, step_dist):
             # Step 3: Target CDF value
             p = p_min + u * (p_max - p_min)
 
-            ## jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
+            ## #jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -148,7 +150,6 @@ def build_kernel(A, b, step_dist):
         
         def logpdf(x, s_max, step_size=1.):
             def _in():
-                p_min = dist.cdf(0.)
                 p_max = dist.cdf(s_max)
                 logp = dist.logpdf(x)
                 return logp - jnp.log(p_max - p_min)
@@ -165,13 +166,12 @@ def build_kernel(A, b, step_dist):
         step = jnp.linalg.norm(sqrt_multiply(state.metric, delta / step_size)) # gamma = || L^-T Delta ||
         direction = delta / step / step_size # v = Delta / gamma
 
-        #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
-
         s_max = compute_intersection(state.position + state.clip * state.grad, step_size * direction)
 
         trunc_logp = trunc_logpdf(step, s_max, )
+        #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
         #jax.debug.print('log_trunc_p={log_trunc_p}, logdet M={logdetM}, log step={logstep}', 
-        #log_trunc_p=trunc_logp, logdetM=.5*logdet(state.metric), logstep=(dim-1)*jnp.log(step))
+        #    log_trunc_p=trunc_logp, logdetM=.5*logdet(state.metric), logstep=(dim-1)*jnp.log(step))
         proposal_logdensity = trunc_logp + .5*logdet(state.metric) - (dim - 1)*jnp.log(step) 
 
         return proposal_logdensity
@@ -185,7 +185,7 @@ def build_kernel(A, b, step_dist):
                 proposal_logdensity_fn,
                 state, new_state, step_size
             )
-        #jax.debug.print('logp={logp}, logq={logq}', logp=new_state.logdensity, logq=proposal_logdensity)
+        ##jax.debug.print('logp={logp}, logq={logq}', logp=new_state.logdensity, logq=proposal_logdensity)
         return -new_state.logdensity + proposal_logdensity
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(

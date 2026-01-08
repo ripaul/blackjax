@@ -17,7 +17,7 @@ from typing import Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
-import jax.scipy as scipy
+import jax.scipy as jscipy
 
 from jax.random import uniform, split
 from jax import lax
@@ -87,7 +87,7 @@ def compute_constraint_intersections(A, b, x, u, eps=1e-8):
     s_min = lax.select(s_max > s_min, s_min, 0.,)
     s_max = lax.select(s_max > s_min, s_max, 0.,)
 
-    return s_min, s_max
+    return 0, s_max
 
 class CholeskyMetric(NamedTuple):
     metric: ArrayTree
@@ -106,15 +106,16 @@ class SVDMetric(NamedTuple):
 
 def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_scale=1.):
 #def setup_metric(metric_backend, max_cond=jnp.inf, min_det=0, max_det=jnp.inf):
-    #jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
+    ##jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
     if metric_backend == 'chol':
         def build_metric(M):
-            L = jnp.linalg.cholesky(M)
+            L = jscipy.linalg.cholesky(M)
             diagonal_fix = jnp.isnan(L).any()
             L = lax.select(diagonal_fix, jnp.sqrt(jnp.diag(jnp.diag(M))), L)
             return Metric(M, L, diagonal_fix)
 
         def sqrt_multiply(metric, x):
+            #jax.debug.print("L={L}, z={z}, y={y}", L=left_hand_side_matrix, z=ravelled_element, scaled) 
             return metric.L.T @ x
 
         def solve(metric, x):
@@ -178,8 +179,8 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_sc
             S = lax.cond(det < min_det, inflate, lambda S: S, operand=S)
             S = lax.cond(det > max_det, deflate, lambda S: S, operand=S)
 
-            #jax.debug.print("log cond = {cond}, log det = {det}", det=jnp.log(det), cond=jnp.log(cond))
-            #jax.debug.print("log cond' = {cond}, log det' = {det}", det=jnp.sum(jnp.log(S)), cond=jnp.log(S).max() - jnp.log(S).min())
+            ##jax.debug.print("log cond = {cond}, log det = {det}", det=jnp.log(det), cond=jnp.log(cond))
+            ##jax.debug.print("log cond' = {cond}, log det' = {det}", det=jnp.sum(jnp.log(S)), cond=jnp.log(S).max() - jnp.log(S).min())
 
             is_ok = ~jnp.any(jnp.isnan(U))
             is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isnan(S)))
@@ -229,13 +230,15 @@ def init(
     drift = vector_field_fn(position)
     metric = build_metric(mass_matrix_fn(position))
 
+    #jax.debug.print("metric={m}", m=metric)
+
     drift = solve(metric, drift) # natural gradient H^{-1}g
 
     _, clip = compute_constraint_intersections(A, b, position, drift)
     _s = .5*grad_step_size**2
     drift_clip = lax.select(_s < .5*clip, _s, .5*clip)
 
-    #jax.debug.print('H(x={x})={H}', x=position, H=metric)
+    ##jax.debug.print('H(x={x})={H}', x=position, H=metric)
 
     return EHRState(position, logdensity, drift_clip, drift, metric)
 
@@ -268,7 +271,7 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
             # Step 3: Target CDF value
             p = pa + u * (pb - pa)
 
-            ## jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
+            ## #jax.debug.print("pa={pa}, pb={pb}, p={p}", pa=pa, pb=pb, p=p, ordered=True)
 
             # Step 4: Inverse CDF
             y = dist.ppf(p, )
@@ -280,7 +283,7 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
                 pa = dist.cdf(a)
                 pb = dist.cdf(b)
                 logp = dist.logpdf(x)
-                #jax.debug.print('F(a={a})={pa}, F(b={b})={pb}, p(x={x})={p}', a=a, b=b, pa=pa, pb=pb, x=x, p=logp)
+                ##jax.debug.print('F(a={a})={pa}, F(b={b})={pb}, p(x={x})={p}', a=a, b=b, pa=pa, pb=pb, x=x, p=logp)
                 return logp - jnp.log(pb - pa)
 
             logp = lax.cond(x > b, lambda : -jnp.inf, lambda : lax.cond(a > x, lambda : -jnp.inf, _in), )
@@ -295,13 +298,12 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
         step = jnp.linalg.norm(sqrt_multiply(state.metric, delta / step_size)) # gamma = || L^-T Delta ||
         direction = delta / step / step_size # v = Delta / gamma
 
-        #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
-
         a, b = compute_intersections(state.position + state.drift_clip * state.drift, step_size * direction)
 
         trunc_logp = trunc_logpdf(step, a, b, )
+        #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
         #jax.debug.print('log_trunc_p={log_trunc_p}, logdet M={logdetM}, log step={logstep}', 
-        #log_trunc_p=trunc_logp, logdetM=.5*logdet(state.metric), logstep=(dim-1)*jnp.log(step))
+        #    log_trunc_p=trunc_logp, logdetM=.5*logdet(state.metric), logstep=(dim-1)*jnp.log(step))
         proposal_logdensity = trunc_logp + .5*logdet(state.metric) - (dim - 1)*jnp.log(step) 
 
         return proposal_logdensity
@@ -315,7 +317,7 @@ def build_kernel(A, b, step_dist, metric_backend, max_cond, min_det, max_det, di
                 proposal_logdensity_fn,
                 state, new_state, step_size
             )
-        #jax.debug.print('logp={logp}, logq={logq}', logp=new_state.logdensity, logq=proposal_logdensity)
+        ##jax.debug.print('logp={logp}, logq={logq}', logp=new_state.logdensity, logq=proposal_logdensity)
         return -new_state.logdensity + proposal_logdensity
 
     compute_acceptance_ratio = proposal.compute_asymmetric_acceptance_ratio(

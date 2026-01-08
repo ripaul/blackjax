@@ -332,14 +332,19 @@ def _scale(
     """
     ravelled_element, unravel_fn = ravel_pytree(element)
 
+    left_hand_side_matrix = mass_matrix_sqrt
+
     if inv:
-        left_hand_side_matrix = inv_mass_matrix_sqrt
+        #left_hand_side_matrix = inv_mass_matrix_sqrt
+        op = lambda L, z: jscipy.linalg.solve_triangular(L, z, lower=not trans)
     else:
-        left_hand_side_matrix = mass_matrix_sqrt
+        #left_hand_side_matrix = mass_matrix_sqrt
+        op = jnp.matmul
     if trans:
         left_hand_side_matrix = left_hand_side_matrix.T
 
-    scaled = linear_map(left_hand_side_matrix, ravelled_element)
+    #scaled = linear_map(left_hand_side_matrix, ravelled_element)
+    scaled = op(left_hand_side_matrix, ravelled_element)
 
     return unravel_fn(scaled)
 
@@ -370,14 +375,14 @@ def _format_covariance(cov: Array, is_inv):
         identity = jnp.identity(cov.shape[0])
         if is_inv:
             inv_cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
-            cov_sqrt = jscipy.linalg.solve_triangular(
-                inv_cov_sqrt, identity, lower=True, trans=True
-            )
+            #cov_sqrt = jscipy.linalg.solve_triangular(
+            #    inv_cov_sqrt, identity, lower=True, trans=True
+            #)
         else:
             cov_sqrt = jscipy.linalg.cholesky(cov, lower=False).T
-            inv_cov_sqrt = jscipy.linalg.solve_triangular(
-                cov_sqrt, identity, lower=True, trans=True
-            )
+            #inv_cov_sqrt = jscipy.linalg.solve_triangular(
+            #    cov_sqrt, identity, lower=True, trans=True
+            #)
 
         diag = lambda x: jnp.diag(x)
 
@@ -386,7 +391,8 @@ def _format_covariance(cov: Array, is_inv):
             "The mass matrix has the wrong number of dimensions:"
             f" expected 1 or 2, got {jnp.ndim(cov)}."
         )
-    return cov_sqrt, inv_cov_sqrt, diag
+    #return cov_sqrt, inv_cov_sqrt, diag
+    return cov_sqrt, None, None
 
 
 def _energy(x, mean, cov_sqrt, inv_cov_sqrt, diag):
@@ -394,3 +400,4 @@ def _energy(x, mean, cov_sqrt, inv_cov_sqrt, diag):
     z = linear_map(inv_cov_sqrt, x - mean)
     const = jnp.sum(jnp.log(diag(cov_sqrt))) + d / 2 * jnp.log(2 * jnp.pi)
     return 0.5 * jnp.sum(z**2) + const
+
