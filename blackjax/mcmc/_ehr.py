@@ -45,7 +45,7 @@ class _EHRState(NamedTuple):
 
     The EHR algorithm takes one position of the chain and returns another
     position. In order to make computations more efficient, we also store
-    the current log-probability density, the current drift (typically the gradient)
+    the current log-probability density, the current drift (typically the logdensity_gradient)
     and the local metric (typically the hessian of the target density) of the
     log-probability density.
 
@@ -53,7 +53,7 @@ class _EHRState(NamedTuple):
 
     position: ArrayTree
     logdensity: float
-    grad: ArrayTree
+    logdensity_grad: ArrayTree
     metric: DiffusionMetric
     clip: float
 
@@ -100,16 +100,16 @@ def init(
     step_size: float, 
 ) -> _EHRState:
     logdensity = logdensity_fn(position)
-    grad = vector_field_fn(position)
+    logdensity_grad = vector_field_fn(position)
     metric = mass_matrix_fn(position)
 
     #jax.debug.print("metric={m}", m=metric)
-    grad = solve(metric, grad) # natural gradient H^{-1}g
+    logdensity_grad = solve(metric, logdensity_grad) # natural logdensity_gradient H^{-1}g
 
-    intersection = compute_constraint_intersection(A, b, position, grad)
+    intersection = compute_constraint_intersection(A, b, position, logdensity_grad)
     clip = lax.select(.5*step_size**2 < .5*intersection, .5*step_size**2, .5*intersection)
 
-    return _EHRState(position, logdensity, grad, metric, clip)
+    return _EHRState(position, logdensity, logdensity_grad, metric, clip)
 
 
 def build_kernel(A, b, step_dist):
@@ -162,11 +162,11 @@ def build_kernel(A, b, step_dist):
     trunc_sample, trunc_logpdf = truncate(step_dist)
 
     def proposal_logdensity_fn(state, new_state, step_size):
-        delta = (new_state.position - state.position - state.clip*state.grad) # Delta = y - x - g
+        delta = (new_state.position - state.position - state.clip*state.logdensity_grad) # Delta = y - x - g
         step = jnp.linalg.norm(sqrt_multiply(state.metric, delta / step_size)) # gamma = || L^-T Delta ||
         direction = delta / step / step_size # v = Delta / gamma
 
-        s_max = compute_intersection(state.position + state.clip * state.grad, step_size * direction)
+        s_max = compute_intersection(state.position + state.clip * state.logdensity_grad, step_size * direction)
 
         trunc_logp = trunc_logpdf(step, s_max, )
         #jax.debug.print('||u||={norm}, step={step}', norm=jnp.linalg.norm(direction), step=1./step)
@@ -202,7 +202,7 @@ def build_kernel(A, b, step_dist):
         step_size: float,
     ) -> tuple[_EHRState, _EHRInfo]:
         """Generate a new sample with the EHR kernel."""
-        position, _, grad, metric, clip = state
+        position, _, logdensity_grad, metric, clip = state
         key_direction, key_step, key_accept = jax.random.split(rng_key, num=3)
 
         # sample the elliptical hit and run distribution
@@ -210,26 +210,26 @@ def build_kernel(A, b, step_dist):
         noise = noise / jnp.linalg.norm(noise) # noise uniformly distributed on hypersphere
         direction = sqrt_solve(metric, noise) # v = L.T u with LL.T = H^{-1}
 
-        intersection = compute_intersection(position + clip * grad, step_size * direction)
+        intersection = compute_intersection(position + clip * logdensity_grad, step_size * direction)
         step = trunc_sample(key_step, intersection, )
 
-        new_position = position + clip * grad + step * step_size * direction
+        new_position = position + clip * logdensity_grad + step * step_size * direction
 
         new_logdensity = logdensity_fn(new_position)
-        new_grad = vector_field_fn(new_position)
+        new_logdensity_grad = vector_field_fn(new_position)
         new_metric = mass_matrix_fn(new_position)
-        new_grad = solve(new_metric, new_grad) # natural gradient
+        new_logdensity_grad = solve(new_metric, new_logdensity_grad) # natural logdensity_gradient
 
-        intersection = compute_intersection(new_position, new_grad)
+        intersection = compute_intersection(new_position, new_logdensity_grad)
         new_clip = lax.select(.5*step_size**2 < .5*intersection, .5*step_size**2, .5*intersection)
 
-        new_state = _EHRState(new_position, new_logdensity, new_grad, new_metric, new_clip)
+        new_state = _EHRState(new_position, new_logdensity, new_logdensity_grad, new_metric, new_clip)
 
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_accept, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = _EHRInfo(p_accept, do_accept) #, a, b, direction, step, new_position, new_logdensity, new_clip, new_grad, new_metric)
+        info = _EHRInfo(p_accept, do_accept) #, a, b, direction, step, new_position, new_logdensity, new_clip, new_logdensity_grad, new_metric)
         #info = EHRInfo(p_accept, do_accept)
 
         return accepted_state, info
