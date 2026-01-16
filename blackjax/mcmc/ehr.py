@@ -109,7 +109,7 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2, diag_sc
     ##jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
     if metric_backend == 'chol':
         def build_metric(M):
-            L = jscipy.linalg.cholesky(M)
+            L = jscipy.linalg.cholesky(M, lower=True)
             diagonal_fix = jnp.isnan(L).any()
             L = lax.select(diagonal_fix, jnp.sqrt(jnp.diag(jnp.diag(M))), L)
             return Metric(M, L, diagonal_fix)

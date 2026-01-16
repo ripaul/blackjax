@@ -48,10 +48,16 @@ def overdamped_langevin(logdensity_grad_fn):
     return one_step
 
 
-sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=True)
-sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=True)
-multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
-solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+#sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=True)
+#sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=True)
+#multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
+#solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+#logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
+
+sqrt_multiply = lambda metric, x: metric.mass_matrix_sqrt.T @ x
+sqrt_solve = lambda metric, x: jax.scipy.linalg.solve_triangular(metric.mass_matrix_sqrt.T, x, lower=False)
+multiply = lambda metric, x: metric.mass_matrix_sqrt @ (metric.mass_matrix_sqrt.T @ x)
+solve = lambda metric, x: jax.scipy.linalg.cho_solve((metric.mass_matrix_sqrt, True), x)
 logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
 
 class DiffusionMetric(NamedTuple):

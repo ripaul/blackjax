@@ -68,10 +68,14 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Calla
     logdensity, grad = grad_fn(position)
     metric = mass_matrix_fn(position)
 
+    #_grad = grad
+
     # mass_matrix_fn yields e.g. the hessian H, which is the inverse of the covariance C of the preconditioned mala proposal.
     # the inverse of the preconditioned mala proposal's covariance C in turn is the momentum covariance in a leapfrog-like
     # proposal mechanism, also often referred to as mass matrix M. so M = H = C^{-1}
     grad = solve(metric, grad) # natural gradient
+
+    #jax.debug.print('x={x}, M={M}, g={_g}, ng={g}, logp={logp}', x=position, M=metric.mass_matrix_sqrt, _g=_grad, g=grad, logp=logdensity)
 
     return _SMMALAState(position, logdensity, grad, metric)
 

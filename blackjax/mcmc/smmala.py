@@ -50,7 +50,11 @@ def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
         def sqrt_multiply(metric, x):
             return metric.L.T @ x
 
-        def solve(metric, x):
+        def solve(metric, x): 
+            ### M^{-1} x = (LL.T)^{-1}x = L.T^{-1}L^{-1}x
+            ##y = jax.scipy.linalg.solve_triangular(metric.L, x, lower=True)
+            ##y = jax.scipy.linalg.solve_triangular(metric.L.T, y, lower=False)
+            ##return y
             return jax.scipy.linalg.cho_solve((metric.L, True), x)
 
         def sqrt_solve(metric, x):
@@ -171,7 +175,11 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Calla
     logdensity, grad = grad_fn(position)
     metric = mass_matrix_fn(position)
 
+    #_grad = grad
+
     grad = solve(metric, grad) # natural gradient
+
+    #jax.debug.print('x={x}, M={M}, g={_g}, ng={g}, logp={logp}', x=position, M=metric.L, _g=_grad, g=grad, logp=logdensity)
 
     return SMMALAState(position, logdensity, grad, metric)
 
