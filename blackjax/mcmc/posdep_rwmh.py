@@ -206,7 +206,8 @@ def build_kernel():
 def as_top_level_api(
     logdensity_fn: Callable,
     mass_matrix_fn: Callable, 
-    step_size
+    step_size: float,
+    format_covariance : bool = True,
 ) -> SamplingAlgorithm:
     """"""
 

@@ -363,8 +363,8 @@ def _sq_scale(
     return element
 
 
-def _format_covariance(cov: Array, is_inv):
-    return jscipy.linalg.cholesky(cov, lower=True), None, None
+def _format_covariance(cov: Array, is_inv=False):
+    return jscipy.linalg.cholesky(cov, lower=True), is_inv
     #ndim = jnp.ndim(cov)
     #if ndim == 1:
     #    cov_sqrt = jnp.sqrt(cov)

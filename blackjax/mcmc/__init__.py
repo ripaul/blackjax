@@ -1,4 +1,5 @@
 from . import (
+    adaptive_metropolis,
     adjusted_mclmc,
     adjusted_mclmc_dynamic,
     barker,
@@ -26,6 +27,7 @@ from . import (
 )
 
 __all__ = [
+    "adaptive_metropolis",
     "adjusted_mclmc_dynamic",
     "adjusted_mclmc",
     "barker",
