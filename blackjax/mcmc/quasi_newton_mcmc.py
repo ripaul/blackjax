@@ -159,7 +159,7 @@ def lbfgs(state):
         (s_all, y_all, sTy, valid),
     )
 
-    return lambda position: DiffusionMetric(Sf, Cf)
+    return lambda position: DiffusionMetric(Sf, False)
 
 def build_kernel(inner_kernel):
     """Build a QNMCMC kernel.
