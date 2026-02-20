@@ -84,7 +84,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: C
     # Infer dimensionality d
     d = position.shape[-1]
 
-    inner_state = inner_init(position, logdensity_fn, mass_matrix_fn=lambda _: DiffusionMetric(jnp.eye(d), jnp.eye(d)))
+    inner_state = inner_init(position, logdensity_fn, mass_matrix_fn=lambda _: DiffusionMetric(jnp.eye(d), False))
 
     # --- Step 2: allocate the sliding buffers (m, d) etc. ---
     positions = jnp.zeros((m, d))               # (m, d)
