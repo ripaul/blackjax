@@ -86,7 +86,7 @@ def update_state_cont(state, new_inner_state):
     )
 
 def update_state_sw(state, new_inner_state):
-    m = state.m
+    m = state.positions.shape[0] # state.m is re-purposed as iteration counter
     old_mean = state.mean
     old_cov = state.cov
 
@@ -106,7 +106,7 @@ def update_state_sw(state, new_inner_state):
         positions=new_positions,
         mean=new_mean,
         cov=new_cov,
-        m=m,
+        m=state.m+1,
         M=state.M
     )
 
@@ -118,7 +118,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, M: int, inner
 
     d = position.shape[-1]
 
-    inner_state = inner_init(position, logdensity_fn, mass_matrix_fn=lambda _: DiffusionMetric(jnp.eye(d), True))
+    inner_state = inner_init(position, logdensity_fn, mass_matrix_fn=lambda _: DiffusionMetric(jnp.eye(d), jnp.eye(d)))
 
     if m > 0:
         positions = jnp.zeros((m, d))
@@ -133,7 +133,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, M: int, inner
 
 def estimate_covariance(state):
     d = state.inner_state.position.shape[-1]
-    cov = jax.lax.cond(state.m > state.M, lambda : _format_covariance(state.cov, is_inv=True), lambda : (jnp.eye(d), True))
+    cov = jax.lax.cond(state.m > state.M, lambda : _format_covariance(state.cov, is_inv=True), lambda : (jnp.eye(d), jnp.eye(d)))
     return lambda position: DiffusionMetric(*cov)
 
 def build_kernel(inner_kernel, m):
@@ -146,7 +146,6 @@ def build_kernel(inner_kernel, m):
     information about the transition.
 
     """
-
     if m > 0:
         update_state = update_state_sw
     else:

@@ -30,6 +30,7 @@ We can also generate a relativistic dynamic :cite:p:`lu2017relativistic`.
 """
 from typing import Callable, NamedTuple, Optional, Protocol, Union
 
+import jax
 import jax.numpy as jnp
 import jax.scipy as jscipy
 from jax.flatten_util import ravel_pytree
@@ -335,16 +336,16 @@ def _scale(
     left_hand_side_matrix = mass_matrix_sqrt
 
     if inv:
-        #left_hand_side_matrix = inv_mass_matrix_sqrt
-        op = lambda L, z: jscipy.linalg.solve_triangular(L, z, lower=not trans)
+        left_hand_side_matrix = inv_mass_matrix_sqrt
+        #op = lambda L, z: jscipy.linalg.solve_triangular(L, z, lower=not trans)
     else:
-        #left_hand_side_matrix = mass_matrix_sqrt
-        op = jnp.matmul
+        left_hand_side_matrix = mass_matrix_sqrt
+        #op = jnp.matmul
     if trans:
         left_hand_side_matrix = left_hand_side_matrix.T
 
-    #scaled = linear_map(left_hand_side_matrix, ravelled_element)
-    scaled = op(left_hand_side_matrix, ravelled_element)
+    scaled = linear_map(left_hand_side_matrix, ravelled_element)
+    #scaled = op(left_hand_side_matrix, ravelled_element)
 
     return unravel_fn(scaled)
 
@@ -364,7 +365,15 @@ def _sq_scale(
 
 
 def _format_covariance(cov: Array, is_inv=False):
-    return jscipy.linalg.cholesky(cov, lower=True), is_inv
+    _cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
+    _inv_cov_sqrt = jscipy.linalg.solve_triangular(
+        _cov_sqrt, jnp.identity(cov.shape[0]), lower=True, trans=True
+    )
+
+    cov_sqrt = jax.lax.select(is_inv, _inv_cov_sqrt, _cov_sqrt)
+    inv_cov_sqrt = jax.lax.select(is_inv, _cov_sqrt, _inv_cov_sqrt)
+
+    return cov_sqrt, inv_cov_sqrt
     #ndim = jnp.ndim(cov)
     #if ndim == 1:
     #    cov_sqrt = jnp.sqrt(cov)

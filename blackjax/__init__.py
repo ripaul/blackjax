@@ -13,6 +13,7 @@ from .base import SamplingAlgorithm, VIAlgorithm
 from .diagnostics import effective_sample_size as ess
 from .diagnostics import potential_scale_reduction as rhat
 from .mcmc import adaptive_metropolis as _adaptive_metropolis
+from .mcmc import ef_mcmc as _ef_mcmc
 from .mcmc import adjusted_mclmc as _adjusted_mclmc
 from .mcmc import adjusted_mclmc_dynamic as _adjusted_mclmc_dynamic
 from .mcmc import barker
@@ -143,6 +144,7 @@ barker_proposal = generate_top_level_api_from(barker)
 
 posdep_rwmh = generate_top_level_api_from(_posdep_rwmh)
 adaptive_metropolis = generate_top_level_api_from(_adaptive_metropolis)
+ef_mcmc = generate_top_level_api_from(_ef_mcmc)
 quasi_newton_mcmc = generate_top_level_api_from(_quasi_newton_mcmc)
 
 hmc_family = [hmc, nuts]

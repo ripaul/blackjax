@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Public API for Quasi-Newton Markov chain Monte Carlo."""
+"""Public API for Empirical Fisher Markov chain Monte Carlo."""
 import operator
 from typing import Callable, NamedTuple
 
@@ -29,9 +29,9 @@ from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey, Array
 
 #from blackjax.mcmc.metrics import _format_covariance
 
-__all__ = ["QNMCMCState", "QNMCMCInfo", "init", "build_kernel", "as_top_level_api"]
+__all__ = ["EFMCMCState", "EFMCMCInfo", "init", "build_kernel", "as_top_level_api"]
 
-class QNMCMCState(NamedTuple):
+class EFMCMCState(NamedTuple):
     """State of the quasi-newton MCMC algorithm.
 
     """
@@ -41,7 +41,7 @@ class QNMCMCState(NamedTuple):
     logdensities: Array
     logdensity_grads: Array
 
-class QNMCMCInfo(NamedTuple):
+class EFMCMCInfo(NamedTuple):
     """Additional information on the MALA transition.
 
     This additional information can be used for debugging or computing
@@ -74,14 +74,14 @@ def update_state(state, new_inner_state):
     updated_logdensities   = jnp.concatenate([old_logp, jnp.array([new_logp])], axis=0)
     updated_logdensity_grads = jnp.concatenate([old_grad, new_grad[None, :]], axis=0)
 
-    return QNMCMCState(
+    return EFMCMCState(
         inner_state=new_inner_state,
         positions=updated_positions,
         logdensities=updated_logdensities,
         logdensity_grads=updated_logdensity_grads,
     )
 
-def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: Callable) -> QNMCMCState:
+def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: Callable) -> EFMCMCState:
     # Infer dimensionality d
     d = position.shape[-1]
 
@@ -92,80 +92,39 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: C
     logdensities = -jnp.inf * jnp.ones((m,))              # (m,)
     logdensity_grads = jnp.zeros((m, d))        # (m, d)
 
-    return update_state(QNMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
+    return update_state(EFMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
 
-def lbfgs(state, lambd):
+def empirical_fisher(state, lambd):
     """
-    HAM-CMC L-BFGS metric builder.
-    Uses chronological history and trust-region regularization.
     """
-    # HAM-CMC uses the history samples directly
-    # No sorting by L(x) is performed in this simplified version
-    positions = state.positions           # (m, d)
-    grads = state.logdensity_grads        # (m, d)
+    # G has shape (m, d)
+    G = state.logdensity_grads
+    m, d = G.shape
 
-    avg_grad_norm = jnp.mean(jnp.linalg.norm(grads, axis=1))
-    
-    # Calculate s and y differences chronologically
-    # Note: Using the specific HAM-CMC displacement definition
-    s_all = positions[1:] - positions[:-1] 
-    y_raw = grads[1:] - grads[:-1] # Gradient of log-density
-    
-    # For a maximizer (log-density), we treat -U as the target.
-    # Therefore, y = -(g_{t+1} - g_t) = g_t - g_{t+1}
-    y_target = -y_raw 
+    # 1. Compute the Empirical Fisher (Average Outer Product)
+    # This is O(m * d^2). Vectorized and much faster than L-BFGS scans.
+    fisher_mat = (G.T @ G) / m
 
-    # Trust Region Modification: y_t = y_t + lambda * s_t
-    # This ensures positive definiteness without filtering
-    y_all = y_target + lambd * s_all * avg_grad_norm
+    # 2. Regularize the diagonal (The "Trust Region" / Tikhonov approach)
+    # This addresses rank-deficiency when m < d.
+    # Equivalent to approximating (H + lambda*I)^-1.
+    A = fisher_mat + lambd * jnp.eye(d)
 
-    d = positions.shape[1]
+    # 3. Factorize for the Sampler
+    # low_hess: R such that RR^T = Hessian (for log-det/acceptance)
+    # low_inv:  L such that LL^T = Inverse Hessian (for proposals)
+    L_hess = jscipy.linalg.cholesky(A, lower=True)
+
+    # Efficiently get the inverse Cholesky factor
+    # Stability note: For well-conditioned A (ensured by lambda), this is robust.
     I = jnp.eye(d)
+    L_cov = jscipy.linalg.solve_triangular(L_hess, I, lower=True)
 
-    # Initial matrices
-    S0, C0, B0 = I, I, I
-
-    def lbfgs_step(carry, data):
-        S, C, B = carry
-        s, y = data
-
-        s_v = s[:, None]
-        y_v = y[:, None]
-
-        # sTy is now guaranteed to be > 0 for large enough lambda
-        sTy = jnp.dot(s, y)
-        
-        Bs = B @ s_v
-        sTBs = (s_v.T @ Bs)[0, 0]
-
-        # Safe scalars for the square-root update
-        # We use a tiny epsilon just for absolute numerical safety
-        sty_safe = jnp.where(sTy > 1e-10, sTy, 1.0)
-        stbs_safe = jnp.where(sTBs > 1e-10, sTBs, 1.0)
-
-        p = s_v / sty_safe
-        q = jnp.sqrt(sty_safe / stbs_safe) * (Bs - y_v)
-        t = s_v / stbs_safe
-        u = jnp.sqrt(stbs_safe / sty_safe) * y_v + Bs
-
-        # Matrix updates (recursion for inverse Hessian H_k)
-        S_new = (I - (p @ q.T)) @ S
-        C_new = (I - (u @ t.T)) @ C
-        B_new = C_new @ C_new.T
-
-        return (S_new, C_new, B_new), None
-
-    # Compute the Hessian approximation using chronological scan
-    (Sf, Cf, _), _ = lax.scan(
-        lbfgs_step,
-        (S0, C0, B0),
-        (s_all, y_all),
-    )
-
-    return lambda position: DiffusionMetric(Cf, Sf)
+    # Return the metric object expected by your sampler
+    return lambda position: DiffusionMetric(L_hess, L_cov)
 
 def build_kernel(inner_kernel, lambd):
-    """Build a QNMCMC kernel.
+    """Build a EFMCMC kernel.
 
     Returns
     -------
@@ -175,10 +134,10 @@ def build_kernel(inner_kernel, lambd):
 
     """
     def kernel(
-            rng_key: PRNGKey, state: QNMCMCState, logdensity_fn: Callable, step_size: float
-    ) -> tuple[QNMCMCState, QNMCMCInfo]:
-        """Generate a new sample with the QNMCMC kernel."""
-        mass_matrix_fn = lbfgs(state, lambd)
+            rng_key: PRNGKey, state: EFMCMCState, logdensity_fn: Callable, step_size: float
+    ) -> tuple[EFMCMCState, EFMCMCInfo]:
+        """Generate a new sample with the EFMCMC kernel."""
+        mass_matrix_fn = empirical_fisher(state, lambd)
 
         new_inner_state, info = inner_kernel(rng_key=rng_key, 
                                              state=state.inner_state, 

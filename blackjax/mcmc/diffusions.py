@@ -48,27 +48,28 @@ def overdamped_langevin(logdensity_grad_fn):
     return one_step
 
 
-#sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=True)
-#sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=True)
-#multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
-#solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
-#logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
+sqrt_multiply = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=True)
+sqrt_solve = lambda metric, x: _scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=True)
+multiply = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=False, trans=False)
+solve = lambda metric, x: _sq_scale(metric.mass_matrix_sqrt, metric.inv_mass_matrix_sqrt, x, inv=True, trans=False)
+logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
 
-_sqrt_multiply = lambda metric, x: metric.mass_matrix_sqrt.T @ x
-_sqrt_solve = lambda metric, x: jax.scipy.linalg.solve_triangular(metric.mass_matrix_sqrt.T, x, lower=False)
-_multiply = lambda metric, x: metric.mass_matrix_sqrt @ (metric.mass_matrix_sqrt.T @ x)
-_solve = lambda metric, x: jax.scipy.linalg.cho_solve((metric.mass_matrix_sqrt, True), x)
-_logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
-
-sqrt_multiply = lambda metric, x: jax.lax.cond(metric.inv, _sqrt_solve, _sqrt_multiply, metric, x)
-sqrt_solve = lambda metric, x: jax.lax.cond(metric.inv, _sqrt_multiply, _sqrt_solve, metric, x)
-multiply = lambda metric, x: jax.lax.cond(metric.inv, _solve, _multiply, metric, x)
-solve = lambda metric, x: jax.lax.cond(metric.inv, _multiply, _solve, metric, x)
-logdet = lambda metric: jax.lax.select(metric.inv, -2, 2) * jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
+#_sqrt_multiply = lambda metric, x: metric.mass_matrix_sqrt.T @ x
+#_sqrt_solve = lambda metric, x: jax.scipy.linalg.solve_triangular(metric.mass_matrix_sqrt.T, x, lower=False)
+#_multiply = lambda metric, x: metric.mass_matrix_sqrt @ (metric.mass_matrix_sqrt.T @ x)
+#_solve = lambda metric, x: jax.scipy.linalg.cho_solve((metric.mass_matrix_sqrt, True), x)
+#_logdet = lambda metric: 2*jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
+#
+#sqrt_multiply = lambda metric, x: jax.lax.cond(metric.inv, _sqrt_solve, _sqrt_multiply, metric, x)
+#sqrt_solve = lambda metric, x: jax.lax.cond(metric.inv, _sqrt_multiply, _sqrt_solve, metric, x)
+#multiply = lambda metric, x: jax.lax.cond(metric.inv, _solve, _multiply, metric, x)
+#solve = lambda metric, x: jax.lax.cond(metric.inv, _multiply, _solve, metric, x)
+#logdet = lambda metric: jax.lax.select(metric.inv, -2, 2) * jnp.sum(jnp.log(jnp.diag(metric.mass_matrix_sqrt)))
 
 class DiffusionMetric(NamedTuple):
     mass_matrix_sqrt: Array
-    inv: bool
+    inv_mass_matrix_sqrt: Array
+    #inv: bool
 
 class ManifoldDiffusionState(NamedTuple):
     position: ArrayTree
