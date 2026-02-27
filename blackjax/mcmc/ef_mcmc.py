@@ -27,8 +27,6 @@ import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey, Array
 
-#from blackjax.mcmc.metrics import _format_covariance
-
 __all__ = ["EFMCMCState", "EFMCMCInfo", "init", "build_kernel", "as_top_level_api"]
 
 class EFMCMCState(NamedTuple):

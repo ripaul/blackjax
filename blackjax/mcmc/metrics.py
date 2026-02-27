@@ -364,45 +364,36 @@ def _sq_scale(
     return element
 
 
-def _format_covariance(cov: Array, is_inv=False):
-    _cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
-    _inv_cov_sqrt = jscipy.linalg.solve_triangular(
-        _cov_sqrt, jnp.identity(cov.shape[0]), lower=True, trans=True
-    )
 
-    cov_sqrt = jax.lax.select(is_inv, _inv_cov_sqrt, _cov_sqrt)
-    inv_cov_sqrt = jax.lax.select(is_inv, _cov_sqrt, _inv_cov_sqrt)
+def _format_covariance(cov: Array, is_inv):
+    ndim = jnp.ndim(cov)
+    if ndim == 1:
+        cov_sqrt = jnp.sqrt(cov)
+        inv_cov_sqrt = 1 / cov_sqrt
+        diag = lambda x: x
+        if is_inv:
+            inv_cov_sqrt, cov_sqrt = cov_sqrt, inv_cov_sqrt
+    elif ndim == 2:
+        identity = jnp.identity(cov.shape[0])
+        if is_inv:
+            inv_cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
+            cov_sqrt = jscipy.linalg.solve_triangular(
+                inv_cov_sqrt, identity, lower=True, trans=True
+            )
+        else:
+            cov_sqrt = jscipy.linalg.cholesky(cov, lower=False).T
+            inv_cov_sqrt = jscipy.linalg.solve_triangular(
+                cov_sqrt, identity, lower=True, trans=True
+            )
 
-    return cov_sqrt, inv_cov_sqrt
-    #ndim = jnp.ndim(cov)
-    #if ndim == 1:
-    #    cov_sqrt = jnp.sqrt(cov)
-    #    inv_cov_sqrt = 1 / cov_sqrt
-    #    diag = lambda x: x
-    #    if is_inv:
-    #        inv_cov_sqrt, cov_sqrt = cov_sqrt, inv_cov_sqrt
-    #elif ndim == 2:
-    #    identity = jnp.identity(cov.shape[0])
-    #    if is_inv:
-    #        inv_cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
-    #        #cov_sqrt = jscipy.linalg.solve_triangular(
-    #        #    inv_cov_sqrt, identity, lower=True, trans=True
-    #        #)
-    #    else:
-    #        cov_sqrt = jscipy.linalg.cholesky(cov, lower=True)
-    #        #inv_cov_sqrt = jscipy.linalg.solve_triangular(
-    #        #    cov_sqrt, identity, lower=True, trans=True
-    #        #)
+        diag = lambda x: jnp.diag(x)
 
-    #    diag = lambda x: jnp.diag(x)
-
-    #else:
-    #    raise ValueError(
-    #        "The mass matrix has the wrong number of dimensions:"
-    #        f" expected 1 or 2, got {jnp.ndim(cov)}."
-    #    )
-    ##return cov_sqrt, inv_cov_sqrt, diag
-    #return cov_sqrt, None, None
+    else:
+        raise ValueError(
+            "The mass matrix has the wrong number of dimensions:"
+            f" expected 1 or 2, got {jnp.ndim(cov)}."
+        )
+    return cov_sqrt, inv_cov_sqrt, diag
 
 
 def _energy(x, mean, cov_sqrt, inv_cov_sqrt, diag):
