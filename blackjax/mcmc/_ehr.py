@@ -98,6 +98,7 @@ def init(
     vector_field_fn: Callable,
     mass_matrix_fn: Callable, 
     step_size: float, 
+    grad_clip: float,
 ) -> _EHRState:
     logdensity = logdensity_fn(position)
     logdensity_grad = vector_field_fn(position)
@@ -107,7 +108,7 @@ def init(
     logdensity_grad = solve(metric, logdensity_grad) # natural logdensity_gradient H^{-1}g
 
     intersection = compute_constraint_intersection(A, b, position, logdensity_grad)
-    clip = lax.select(.5*step_size**2 < .5*intersection, .5*step_size**2, .5*intersection)
+    clip = lax.select(.5*step_size**2 < grad_clip*intersection, .5*step_size**2, grad_clip*intersection)
 
     return _EHRState(position, logdensity, logdensity_grad, metric, clip)
 
@@ -200,6 +201,7 @@ def build_kernel(A, b, step_dist):
         vector_field_fn: Callable,
         mass_matrix_fn: Callable, 
         step_size: float,
+        grad_clip: float,
     ) -> tuple[_EHRState, _EHRInfo]:
         """Generate a new sample with the EHR kernel."""
         position, _, logdensity_grad, metric, clip = state
@@ -221,7 +223,7 @@ def build_kernel(A, b, step_dist):
         new_logdensity_grad = solve(new_metric, new_logdensity_grad) # natural logdensity_gradient
 
         intersection = compute_intersection(new_position, new_logdensity_grad)
-        new_clip = lax.select(.5*step_size**2 < .5*intersection, .5*step_size**2, .5*intersection)
+        new_clip = lax.select(.5*step_size**2 < grad_clip*intersection, .5*step_size**2, grad_clip*intersection)
 
         new_state = _EHRState(new_position, new_logdensity, new_logdensity_grad, new_metric, new_clip)
 
@@ -245,6 +247,7 @@ def as_top_level_api(
     mass_matrix_fn: Callable,
     step_size: float,
     step_dist = None,
+    grad_clip: float = .5,
     format_covariance: bool = True,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the EHR kernel.
@@ -307,10 +310,10 @@ def as_top_level_api(
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, A, b, vector_field_fn, _mass_matrix_fn, step_size)
+        return init(position, logdensity_fn, A, b, vector_field_fn, _mass_matrix_fn, step_size, grad_clip)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, vector_field_fn, _mass_matrix_fn, step_size)
+        return kernel(rng_key, state, logdensity_fn, vector_field_fn, _mass_matrix_fn, step_size, grad_clip)
 
     return SamplingAlgorithm(init_fn, step_fn)
 
