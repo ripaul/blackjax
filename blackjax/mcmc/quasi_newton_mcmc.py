@@ -27,8 +27,6 @@ import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey, Array
 
-#from blackjax.mcmc.metrics import _format_covariance
-
 __all__ = ["QNMCMCState", "QNMCMCInfo", "init", "build_kernel", "as_top_level_api"]
 
 class QNMCMCState(NamedTuple):
@@ -94,75 +92,66 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: C
 
     return update_state(QNMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
 
-def lbfgs(state, lambd):
-    """
-    HAM-CMC L-BFGS metric builder.
-    Uses chronological history and trust-region regularization.
-    """
-    # HAM-CMC uses the history samples directly
-    # No sorting by L(x) is performed in this simplified version
-    positions = state.positions           # (m, d)
-    grads = state.logdensity_grads        # (m, d)
-
-    avg_grad_norm = jnp.mean(jnp.linalg.norm(grads, axis=1))
+def lbfgs(state):
+    # f(x) = -logdensity(x)
+    positions = state.positions
+    grads = -state.logdensity_grads
+    energies = -state.logdensities
     
-    # Calculate s and y differences chronologically
-    # Note: Using the specific HAM-CMC displacement definition
-    s_all = positions[1:] - positions[:-1] 
-    y_raw = grads[1:] - grads[:-1] # Gradient of log-density
+    d = positions.shape[-1]
     
-    # For a maximizer (log-density), we treat -U as the target.
-    # Therefore, y = -(g_{t+1} - g_t) = g_t - g_{t+1}
-    y_target = -y_raw 
+    # 1. Sort samples by energy (L(x))
+    idx = jnp.argsort(energies)
+    pos_sorted = positions[idx]
+    grad_sorted = grads[idx]
 
-    # Trust Region Modification: y_t = y_t + lambda * s_t
-    # This ensures positive definiteness without filtering
-    y_all = y_target + lambd * s_all * avg_grad_norm
+    # 2. Setup initial matrices
+    gamma = 1.0
+    S0 = jnp.eye(d) * jnp.sqrt(gamma)
+    C0 = jnp.eye(d) * jnp.sqrt(1.0 / gamma)
 
-    d = positions.shape[1]
-    I = jnp.eye(d)
-
-    # Initial matrices
-    S0, C0, B0 = I, I, I
-
-    def lbfgs_step(carry, data):
-        S, C, B = carry
-        s, y = data
-
-        s_v = s[:, None]
-        y_v = y[:, None]
-
-        # sTy is now guaranteed to be > 0 for large enough lambda
-        sTy = jnp.dot(s, y)
+    # 3. Update Loop with Bridging
+    def body_fn(carry, i):
+        S, C, last_valid_idx = carry
         
-        Bs = B @ s_v
-        sTBs = (s_v.T @ Bs)[0, 0]
+        # Compute candidates for s and y
+        s = pos_sorted[i] - pos_sorted[last_valid_idx]
+        y = grad_sorted[i] - grad_sorted[last_valid_idx]
+        
+        sy = jnp.dot(s, y)
+        
+        Bs = C @ (C.T @ s)
+        sBs = jnp.dot(s, Bs)
+        #sBy = jnp.dot(y, Bs) # because B is symmetric
+        
+        # Curvature condition + Square root safety
+        is_valid = (sy > 0) #& (sBy > 0)
+        
+        # Formulas (Eq 10 & 11)
+        #p = s / sy
+        #q = jnp.sqrt(sy / sBy) * Bs - y
+        
+        t = s / sBs
+        u = jnp.sqrt(sBs / sy) * y + Bs
+        
+        #S_next = S - jnp.outer(p, q @ S)
+        C_next = C - jnp.outer(u, t @ C)
+        
+        # If invalid, we skip this point (bridging)
+        #S = jnp.where(is_valid, S_next, S)
+        C = jnp.where(is_valid, C_next, C)
+        idx = jnp.where(is_valid, i, last_valid_idx)
+        
+        return (S, C, idx), None
 
-        # Safe scalars for the square-root update
-        # We use a tiny epsilon just for absolute numerical safety
-        sty_safe = jnp.where(sTy > 1e-10, sTy, 1.0)
-        stbs_safe = jnp.where(sTBs > 1e-10, sTBs, 1.0)
-
-        p = s_v / sty_safe
-        q = jnp.sqrt(sty_safe / stbs_safe) * (Bs - y_v)
-        t = s_v / stbs_safe
-        u = jnp.sqrt(stbs_safe / sty_safe) * y_v + Bs
-
-        # Matrix updates (recursion for inverse Hessian H_k)
-        S_new = (I - (p @ q.T)) @ S
-        C_new = (I - (u @ t.T)) @ C
-        B_new = C_new @ C_new.T
-
-        return (S_new, C_new, B_new), None
-
-    # Compute the Hessian approximation using chronological scan
-    (Sf, Cf, _), _ = lax.scan(
-        lbfgs_step,
-        (S0, C0, B0),
-        (s_all, y_all),
+    # Iterate through the sorted history
+    (_, C, _), _ = jax.lax.scan(
+        body_fn, (S0, C0, 0), jnp.arange(1, len(pos_sorted))
     )
 
-    return lambda position: DiffusionMetric(Cf, Sf)
+    S = jax.scipy.linalg.inv(C).T
+
+    return lambda position: DiffusionMetric(C, S)
 
 def build_kernel(inner_kernel, lambd):
     """Build a QNMCMC kernel.
