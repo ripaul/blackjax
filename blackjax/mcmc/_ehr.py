@@ -98,7 +98,7 @@ def init(
     vector_field_fn: Callable,
     mass_matrix_fn: Callable, 
     step_size: float, 
-    grad_clip: float,
+    grad_clip: float = 0.5,
 ) -> _EHRState:
     logdensity = logdensity_fn(position)
     logdensity_grad = vector_field_fn(position)
@@ -201,7 +201,7 @@ def build_kernel(A, b, step_dist):
         vector_field_fn: Callable,
         mass_matrix_fn: Callable, 
         step_size: float,
-        grad_clip: float,
+        grad_clip: float = 0.5,
     ) -> tuple[_EHRState, _EHRInfo]:
         """Generate a new sample with the EHR kernel."""
         position, _, logdensity_grad, metric, clip = state

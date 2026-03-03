@@ -85,7 +85,7 @@ def update_state_cont(state, new_inner_state):
         M=state.M
     )
 
-def update_state_sw(state, new_inner_state, lambd):
+def update_state_sw(state, new_inner_state):
     m = state.positions.shape[0] # state.m is re-purposed as iteration counter
     old_mean = state.mean
     old_cov = state.cov
@@ -133,10 +133,10 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, M: int, inner
 
 def estimate_covariance(state):
     d = state.inner_state.position.shape[-1]
-    cov = jax.lax.cond(state.m > state.M, lambda : _format_covariance(state.cov, is_inv=True), lambda : (jnp.eye(d), jnp.eye(d)))
-    return lambda position: DiffusionMetric(*cov[:2])
+    cov = jax.lax.cond(state.m > state.M, lambda : _format_covariance(state.cov, is_inv=True)[:2], lambda : (jnp.eye(d), jnp.eye(d)))
+    return lambda position: DiffusionMetric(*cov)
 
-def build_kernel(inner_kernel, m, lambd):
+def build_kernel(inner_kernel, m):
     """Build a AM kernel.
 
     Returns
@@ -147,7 +147,7 @@ def build_kernel(inner_kernel, m, lambd):
 
     """
     if m > 0:
-        update_state = lambda state, new_inner_state: update_state_sw(state, new_inner_state, lambd)
+        update_state = update_state_sw
     else:
         update_state = update_state_cont
 

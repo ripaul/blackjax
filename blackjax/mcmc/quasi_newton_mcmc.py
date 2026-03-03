@@ -92,7 +92,7 @@ def init(position: ArrayLikeTree, logdensity_fn: Callable, m: int, inner_init: C
 
     return update_state(QNMCMCState(inner_state, positions, logdensities, logdensity_grads), inner_state)
 
-def lbfgs(state):
+def lbfgs(state, lambd):
     # f(x) = -logdensity(x)
     positions = state.positions
     grads = -state.logdensity_grads
@@ -106,7 +106,7 @@ def lbfgs(state):
     grad_sorted = grads[idx]
 
     # 2. Setup initial matrices
-    gamma = 1.0
+    gamma = lambd
     S0 = jnp.eye(d) * jnp.sqrt(gamma)
     C0 = jnp.eye(d) * jnp.sqrt(1.0 / gamma)
 
