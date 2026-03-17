@@ -12,7 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""""""
+"""Public API for the Vaidya walk algorithm.
+
+The Vaidya walk is a constraint-aware random walk that uses a volume-aware
+metric derived from the constraints. It is a Metropolis-Hastings algorithm
+with a position-dependent proposal covariance matrix that improves mixing
+compared to the Dikin walk.
+
+References
+----------
+.. [1] "Sampling from Log-Concave Distributions with the Vaidya Process"
+    (https://www.cs.utexas.edu/~ans/papers/vaidya.pdf)
+"""
+
 from typing import Callable, NamedTuple, Optional
 
 import jax

@@ -11,129 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Public API for Metropolis Adjusted Langevin kernels."""
+"""Public API for simplified Manifold Metropolis Adjusted Langevin kernels."""
 import operator
 from typing import Callable, NamedTuple
 
 import jax
 import jax.lax as lax
 import jax.numpy as jnp
+from jax.flatten_util import ravel_pytree
 
 import blackjax.mcmc.diffusions as diffusions
+from blackjax.mcmc.diffusions import sqrt_multiply, sqrt_solve, multiply, solve, logdet, DiffusionMetric
+from blackjax.mcmc.metrics import _format_covariance
+
 import blackjax.mcmc.proposal as proposal
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import ArrayLikeTree, ArrayTree, PRNGKey
 
-__all__ = ["SMMALAState", "SMMALAInfo", "init", "build_kernel", "as_top_level_api"]
 
+__all__ = ["_SMMALAState", "_SMMALAInfo", "init", "build_kernel", "as_top_level_api"]
 
-class CholeskyMetric(NamedTuple):
-    metric: ArrayTree
-    L: ArrayTree
-    diagonal_fix: bool
-
-class SVDMetric(NamedTuple):
-    metric: ArrayTree
-    U: ArrayTree
-    S: ArrayTree
-
-def setup_metric(metric_backend, max_cond=1e2, min_det=1e1, max_det=1e2):
-#def setup_metric(metric_backend, max_cond=jnp.inf, min_det=0, max_det=jnp.inf):
-    #jax.debug.print('max cond = {max_cond}, min det = {min_det}, max det = {max_det}', max_cond=max_cond, min_det=min_det, max_det=max_det)
-    if metric_backend == 'chol':
-        def build_metric(M):
-            L = jnp.linalg.cholesky(M)
-            diagonal_fix = jnp.isnan(L).any()
-            L = lax.select(diagonal_fix, jnp.sqrt(jnp.diag(jnp.diag(M))), L)
-            return Metric(M, L, diagonal_fix)
-
-        def sqrt_multiply(metric, x):
-            return metric.L.T @ x
-
-        def solve(metric, x): 
-            ### M^{-1} x = (LL.T)^{-1}x = L.T^{-1}L^{-1}x
-            ##y = jax.scipy.linalg.solve_triangular(metric.L, x, lower=True)
-            ##y = jax.scipy.linalg.solve_triangular(metric.L.T, y, lower=False)
-            ##return y
-            return jax.scipy.linalg.cho_solve((metric.L, True), x)
-
-        def sqrt_solve(metric, x):
-            return jax.scipy.linalg.solve_triangular(metric.L.T, x, lower=False)
-
-        def logdet(metric):
-            return 2*jnp.sum(jnp.log(jnp.diag(metric.L)))
-
-        def det(metric):
-            return jnp.exp(logdet(metric))
-
-        Metric = CholeskyMetric
-
-    elif metric_backend == 'svd':
-        def build_metric(M):
-            U, S, _ = jnp.linalg.svd(M)
-
-            def dampen(S):
-                determinant = jnp.prod(S)
-                S_prime = (((S / S.min()) - 1) * (max_cond - 1) / (cond - 1) + 1)
-                S_prime *= jnp.prod(S_prime)**(-1/len(S)) * determinant**(1/len(S))
-                return S_prime
-
-            def deflate(S):
-                S *= jnp.prod(S)**(-1/len(S)) * max_det**(1/len(S))
-                return S
-
-            def inflate(S):
-                S *= jnp.prod(S)**(-1/len(S)) * min_det**(1/len(S))
-                return S
-
-            cond = S.max() / S.min()
-            det = jnp.prod(S)
-
-            S = jax.lax.cond(cond > max_cond, dampen, lambda S: S, operand=S)
-            S = jax.lax.cond(det < min_det, inflate, lambda S: S, operand=S)
-            S = jax.lax.cond(det > max_det, deflate, lambda S: S, operand=S)
-
-            #jax.debug.print("log cond = {cond}, log det = {det}", det=jnp.log(det), cond=jnp.log(cond))
-            #jax.debug.print("log cond' = {cond}, log det' = {det}", det=jnp.sum(jnp.log(S)), cond=jnp.log(S).max() - jnp.log(S).min())
-
-            is_ok = ~jnp.any(jnp.isnan(U))
-            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isnan(S)))
-            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isinf(U)))
-            is_ok = jnp.logical_and(is_ok, ~jnp.any(jnp.isinf(S)))
-            is_ok = jnp.logical_and(is_ok, ~jnp.any(S == 0))
-
-            return jax.lax.cond(is_ok, lambda : Metric(M, U, S), lambda : Metric(M, U=jnp.eye(M.shape[0]), S=jnp.ones(M.shape[0])))
-            #return Metric(M, U, S)
-
-        def sqrt_multiply(metric, x):
-            return metric.U @ (jnp.sqrt(metric.S) * x)
-
-        def solve(metric, x):
-            return metric.U @ ((metric.U.T @ x) / metric.S)
-
-        def sqrt_solve(metric, x):
-            return (metric.U.T @ x) / jnp.sqrt(metric.S)
-
-        def logdet(metric):
-            return jnp.sum(jnp.log(metric.S))
-
-        def det(metric):
-            return jnp.exp(logdet(metric))
-
-        Metric = SVDMetric
-
-    else:
-        raise ValueError(f"Unknown backend {metric_backend}, has to be 'svd', 'chol' or 'auto'.")
-
-    def generate_build_metric(mass_matrix_fn):
-        def _build(x):
-            return build_metric(mass_matrix_fn(x))
-        return _build
-
-    return Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det
-
-
-class SMMALAState(NamedTuple):
+class _SMMALAState(NamedTuple):
     """State of the MALA algorithm.
 
     The MALA algorithm takes one position of the chain and returns another
@@ -146,10 +44,9 @@ class SMMALAState(NamedTuple):
     position: ArrayTree
     logdensity: float
     logdensity_grad: ArrayTree
-    metric: NamedTuple
+    metric: DiffusionMetric
 
-
-class SMMALAInfo(NamedTuple):
+class _SMMALAInfo(NamedTuple):
     """Additional information on the MALA transition.
 
     This additional information can be used for debugging or computing
@@ -165,25 +62,24 @@ class SMMALAInfo(NamedTuple):
 
     acceptance_rate: float
     is_accepted: bool
-    proposal_metric: NamedTuple
 
-
-def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Callable, metric_backend: str, max_cond, min_det, max_det) -> SMMALAState:
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
-
+def init(position: ArrayLikeTree, logdensity_fn: Callable, mass_matrix_fn: Callable) -> _SMMALAState:
     grad_fn = jax.value_and_grad(logdensity_fn)
     logdensity, grad = grad_fn(position)
     metric = mass_matrix_fn(position)
 
     #_grad = grad
 
+    # mass_matrix_fn yields e.g. the hessian H, which is the inverse of the covariance C of the preconditioned mala proposal.
+    # the inverse of the preconditioned mala proposal's covariance C in turn is the momentum covariance in a leapfrog-like
+    # proposal mechanism, also often referred to as mass matrix M. so M = H = C^{-1}
     grad = solve(metric, grad) # natural gradient
 
-    #jax.debug.print('x={x}, M={M}, g={_g}, ng={g}, logp={logp}', x=position, M=metric.L, _g=_grad, g=grad, logp=logdensity)
+    #jax.debug.print('x={x}, M={M}, g={_g}, ng={g}, logp={logp}', x=position, M=metric.mass_matrix_sqrt, _g=_grad, g=grad, logp=logdensity)
 
-    return SMMALAState(position, logdensity, grad, metric)
+    return _SMMALAState(position, logdensity, grad, metric)
 
-def build_kernel(metric_backend, max_cond, min_det, max_det):
+def build_kernel():
     """Build a MALA kernel.
 
     Returns
@@ -193,8 +89,6 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
     information about the transition.
 
     """
-
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
 
     # computes -log p(y)q(x|y) where x is `state` and y is `new_state`
     def transition_energy(state, new_state, step_size):
@@ -226,22 +120,24 @@ def build_kernel(metric_backend, max_cond, min_det, max_det):
     sample_proposal = proposal.static_binomial_sampling
 
     def kernel(
-            rng_key: PRNGKey, state: SMMALAState, logdensity_fn: Callable, mass_matrix_fn: Callable, step_size: float
-    ) -> tuple[SMMALAState, SMMALAInfo]:
+            rng_key: PRNGKey, state: _SMMALAState, logdensity_fn: Callable, mass_matrix_fn: Callable, step_size: float
+    ) -> tuple[_SMMALAState, _SMMALAInfo]:
         """Generate a new sample with the MALA kernel."""
         grad_fn = jax.value_and_grad(logdensity_fn)
-        integrator = diffusions._overdamped_manifold_langevin(grad_fn, mass_matrix_fn, sqrt_solve, solve)
+        integrator = diffusions.overdamped_manifold_langevin(grad_fn, mass_matrix_fn, )
 
         key_integrator, key_rmh = jax.random.split(rng_key)
 
         new_state = integrator(key_integrator, state, step_size)
-        new_state = SMMALAState(*new_state)
+        new_state = _SMMALAState(*new_state)
+
+        #jax.debug.print('proposal: {x}', x=new_state)
 
         log_p_accept = compute_acceptance_ratio(state, new_state, step_size=step_size)
         accepted_state, info = sample_proposal(key_rmh, log_p_accept, state, new_state)
         do_accept, p_accept, _ = info
 
-        info = SMMALAInfo(p_accept, do_accept, new_state.metric)
+        info = _SMMALAInfo(p_accept, do_accept, )
 
         return accepted_state, info
 
@@ -252,10 +148,7 @@ def as_top_level_api(
     logdensity_fn: Callable,
     mass_matrix_fn: Callable,
     step_size: float,
-    metric_backend: str = 'chol', 
-    max_cond=1e2,
-    min_det=1e1,
-    max_det=1e2,
+    format_covariance: bool = True,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
 
@@ -306,14 +199,16 @@ def as_top_level_api(
 
     """
 
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
+    kernel = build_kernel()
 
-    kernel = build_kernel(metric_backend, max_cond, min_det, max_det)
-    _mass_matrix_fn = generate_build_metric(mass_matrix_fn)
+    if format_covariance:
+        _mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(mass_matrix_fn(position), is_inv=False)[:2])
+    else:
+        _mass_matrix_fn = mass_matrix_fn
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _mass_matrix_fn, metric_backend, max_cond, min_det, max_det)
+        return init(position, logdensity_fn, _mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
         return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)

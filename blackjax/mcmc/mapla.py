@@ -11,29 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Public API for Metropolis Adjusted Preconditioned Langevin kernels."""
+"""Public API for Metropolis-adjusted Preconditioned Langevin Algorithm (MAPLA)."""
 import operator
 from typing import Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-from blackjax.mcmc.smmala import init, build_kernel, setup_metric 
-from blackjax.mcmc.dikin import dikin_proposal
+from blackjax.mcmc.smmala import init, build_kernel
 from blackjax.base import SamplingAlgorithm
 from blackjax.types import Array, ArrayLikeTree, ArrayTree, PRNGKey
 
-__all__ = ["as_top_level_api"]
+from blackjax.mcmc.dikin import dikin_metric
+from blackjax.mcmc.diffusions import DiffusionMetric
+from blackjax.mcmc.metrics import _format_covariance
+
+__all__ = ["_MAPLAState", "_MAPLAInfo", "as_top_level_api"]
 
 def as_top_level_api(
     logdensity_fn: Callable,
     A: Array,
     b: Array,
     step_size: float,
-    metric_backend: str = 'chol',
-    max_cond=1e2, 
-    min_det=1e1, 
-    max_det=1e2,
 ) -> SamplingAlgorithm:
     """Implements the (basic) user interface for the MALA kernel.
 
@@ -83,18 +82,22 @@ def as_top_level_api(
     A ``SamplingAlgorithm``.
 
     """
-    Metric, generate_build_metric, build_metric, sqrt_multiply, solve, sqrt_solve, logdet, det = setup_metric(metric_backend, max_cond, min_det, max_det)
-
-    dikin, _, _ = dikin_proposal(A, b)
-    kernel = build_kernel(metric_backend, max_cond, min_det, max_det)
-    _mass_matrix_fn = generate_build_metric(dikin)
+    dikin = dikin_metric(A, b)
+    mass_matrix_fn = lambda position: DiffusionMetric(*_format_covariance(dikin(position), is_inv=False)[:2])
+    kernel = build_kernel()
 
     def init_fn(position: ArrayLikeTree, rng_key=None):
         del rng_key
-        return init(position, logdensity_fn, _mass_matrix_fn, metric_backend, max_cond, min_det, max_det)
+        return init(position, logdensity_fn, mass_matrix_fn)
 
     def step_fn(rng_key: PRNGKey, state):
-        return kernel(rng_key, state, logdensity_fn, _mass_matrix_fn, step_size)
+        return kernel(
+            rng_key,
+            state,
+            logdensity_fn,
+            mass_matrix_fn,
+            step_size,
+        )
 
     return SamplingAlgorithm(init_fn, step_fn)
 
